@@ -5,33 +5,50 @@
 .idea/
 *.iml
 
+# VS Code
+.vscode/
+
 # Java / Spring
 backend/build/
 backend/.gradle/
 *.class
+
+# Spring local / secret configuration
+application-secret.yml
+application-secret.properties
+application-local.yml
+application-local.properties
 
 # Python
 __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
 
 # Frontend
 node_modules/
+frontend/dist/
+frontend/.next/
 
 # Environment / Secrets
 .env
 .env.*
-application-secret.yml
 
 # Logs
 *.log
+logs/
 
 # AI Model Files
 *.pt
 *.pth
 *.onnx
 
-# Media
+# Local uploaded media
+uploads/
+media/
+
+# Media files
 *.wav
 *.mp4
