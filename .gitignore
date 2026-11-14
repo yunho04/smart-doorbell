@@ -46,8 +46,8 @@ logs/
 *.onnx
 
 # Local uploaded media
-uploads/
-media/
+/uploads/
+/media/
 
 # Media files
 *.wav
