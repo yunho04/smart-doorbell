@@ -52,3 +52,4 @@ media/
 # Media files
 *.wav
 *.mp4
+.Rhistory
