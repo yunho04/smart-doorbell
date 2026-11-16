@@ -46,7 +46,7 @@ python3 -m proximity_camera run --mode mock --config config.local.json --max-cap
 sudo apt update
 sudo apt install git
 cd ~
-git clone --branch codex/iot-proximity-camera --single-branch https://github.com/yunho04/smart-doorbell.git
+git clone --branch jeongwon/iot-proximity-camera --single-branch https://github.com/yunho04/smart-doorbell.git
 cd ~/smart-doorbell/iot
 xargs -r -a requirements-apt.txt sudo apt install --
 python3 -m venv --system-site-packages .venv
@@ -166,11 +166,12 @@ python3 -m proximity_camera run --mode hardware --max-captures 1
 ```bash
 cd ~/smart-doorbell
 git status
+git remote set-branches --add origin jeongwon/iot-proximity-camera
 git fetch origin
-git switch codex/iot-proximity-camera
+git switch jeongwon/iot-proximity-camera
 ```
 
-로컬에 브랜치가 없으면 `git switch`는 일치하는 원격 추적 브랜치에서 생성한다. 여러 원격 때문에 자동 선택되지 않는 경우 `git switch --track origin/codex/iot-proximity-camera`를 사용한다. 로컬 수정이 있으면 보존하고 전환하며, `reset --hard`로 덮어쓰지 않는다.
+이전 `codex/iot-proximity-camera`를 `--single-branch`로 클론했으면 기본 fetch 대상이 그 브랜치로 제한되어 있을 수 있다. 위 `git remote set-branches --add`로 새 브랜치도 계속 가져오도록 설정한다. 로컬에 브랜치가 없으면 `git switch`는 일치하는 원격 추적 브랜치에서 생성한다. 여러 원격 때문에 자동 선택되지 않는 경우 `git switch --track origin/jeongwon/iot-proximity-camera`를 사용한다. 로컬 수정이 있으면 보존하고 전환하며, `reset --hard`로 덮어쓰지 않는다.
 
 이후 노트북에서 수정·검증·푸시한 코드는 Pi에서 다음처럼 업데이트한다. 개인 설정과 촬영 이미지는 Git에서 제외되어 있다.
 
@@ -185,4 +186,4 @@ source .venv/bin/activate
 
 사진은 기본 `captures/`에 저장한다. 기본 보관 한도는 파일 100개, 전체 100MiB, 촬영 파일당 10MiB, 여유 공간 100MiB 이상이다. 한도에 닿으면 촬영을 거절하며 기존 파일은 삭제하지 않는다. 실패한 임시 파일은 작업자 종료 후 삭제한다. 공간 확보는 사용자가 사진을 확인한 뒤 직접 수행한다. `request_id`는 로컬 촬영 시도 식별자이며 서버 Event ID가 아니다. `echo timeout`은 센서 미응답, `echo already high`는 ECHO 상태 이상, `autofocus failed`는 초점 실패를 뜻한다. 배선·전원과 단독 명령 결과를 확인한다. SIGTERM 종료도 정리를 시도하지만 강제 종료나 전원 차단 시 남은 임시 파일은 수동 확인이 필요하다.
 
-작업 공유 브랜치는 `codex/iot-proximity-camera`다. 노트북에서 개발·모의 검증 후 이 브랜치에 푸시하고 Pi에서 실제 하드웨어를 검증한다. 팀원 상호 검증 후 `main`에 병합한다.
+작업 공유 브랜치는 **`jeongwon/iot-proximity-camera`**다. 앞으로 새 작업 브랜치의 접두사도 `jeongwon/`을 사용한다. 이전 `codex/iot-proximity-camera`의 코드·커밋 이력을 그대로 이어받았으며, 기존 브랜치는 이력 보존용으로 남긴다. 노트북에서 개발·모의 검증 후 새 브랜치에 푸시하고 Pi에서 실제 하드웨어를 검증한다. 팀원 상호 검증 후 `main`에 병합한다.
