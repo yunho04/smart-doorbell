@@ -1,14 +1,16 @@
 # 근접 감지 및 사진 로컬 저장
 
-이번 구현은 HC-SR04 거리 측정 → Camera Module 3 활성화 → 사진 한 장 저장까지다. 초음파 센서는 사람과 다른 물체를 구분하지 않는다. HC-SR501, 사람 인식, 서버, MQTT, HTTP, Event ID는 구현 범위가 아니다. 실제 Pi의 OS·Python·센서·카메라·배선 및 동작은 아직 검증하지 않았다. 아래 GPIO와 임계값은 보정 전 개발 예시다.
+이번 구현은 HC-SR04 거리 측정 → Camera Module 3 활성화 → 사진 한 장 저장까지다. 초음파 센서는 사람과 다른 물체를 구분하지 않는다. HC-SR501, 사람 인식, 서버, MQTT, HTTP, Event ID는 구현 범위가 아니다. 실제 Pi의 OS·Python 버전은 사용자 출력으로 확인했으며 센서·카메라·배선 및 동작은 아직 검증하지 않았다. 아래 GPIO와 임계값은 보정 전 개발 예시다.
 
 ## 실행 요구사항
 
 | 구분 | 요구사항과 확인 상태 |
 |---|---|
 | 모의 실행·테스트 | Python 3.9 이상, 표준 라이브러리만 사용 |
-| 실제 Pi | Raspberry Pi OS가 제공하는 Python과 아래 APT 패키지, CSI 카메라와 HC-SR04. 실제 OS·Python·패키지 호환성은 미검증 |
-| 프로젝트 목표 | SAD의 Python 목표는 3.13이며 실제 Pi 버전은 아직 미확인 |
+| 실제 Pi | OS 제공 Python과 아래 APT 패키지, CSI 카메라와 HC-SR04. 사용자 출력 기준 Python 3.13.5, OS 표기는 Debian GNU/Linux 13(trixie), `DEBIAN_VERSION_FULL=13.7`. 패키지 설치·실제 하드웨어 동작은 미검증 |
+| 프로젝트 목표 | SAD의 Python 3.13 목표와 실제 Pi의 3.13.5가 일치. 시스템 Python을 그대로 사용 |
+
+위 실제 환경 정보는 2026-11-16 사용자가 전달한 `python3 --version`, `cat /etc/os-release` 결과다. Python 3.13.5에서 프로젝트 테스트와 촬영을 실행한 결과를 뜻하지 않는다. 개발용 Mac에서 Python 3.9.6으로 테스트 14개가 통과한 기록과 구분한다.
 
 `pyproject.toml`의 `requires-python = ">=3.9"`는 패키지를 pip로 설치할 때 검사하는 메타데이터다. `python3 -m`으로 직접 실행할 때 이 조건을 강제하지 않으므로 `python3 --version`으로 직접 확인한다. pip 설치는 필수가 아니다. Pi의 카메라·GPIO 패키지는 `requirements-apt.txt`에서 관리하며 pip requirements에는 넣지 않는다. OS별 패키지 가용성과 native libcamera 연동은 실제 Pi에서 확인한다. 시스템 Python을 교체하지 않는다.
 
@@ -54,7 +56,7 @@ rpicam-hello --list-cameras
 rpicam-still -n --autofocus-on-capture -o test.jpg
 ```
 
-설치는 Raspberry Pi OS 기준 예시다. 패키지 오류가 나면 실제 OS의 지원 여부와 버전을 확인한다. 카메라 사진을 열어 초점과 방향을 확인한다. Python 3.13은 목표이며 실제 OS 제공 버전과 패키지 호환성은 아직 미확인이다.
+설치는 Raspberry Pi OS 기준 예시다. 패키지 오류가 나면 실제 OS의 패키지 저장소와 지원 여부를 확인한다. 카메라 사진을 열어 초점과 방향을 확인한다. 현재 Pi의 Python은 3.13.5로 확인했으나 카메라·GPIO 패키지 설치와 호환성은 아직 미검증이다.
 
 3. 센서와 저항의 실제 표기·값을 확인하고 전원을 끈 상태에서 배선한다. 아래는 **미검증 개발 예시**이며 BCM 번호와 물리 핀 번호를 구분한다. 일반 HC-SR04의 ECHO는 5V이므로 GPIO에 직접 연결하지 않는다. [GPIO Zero 공식 HC-SR04 배선](https://gpiozero.readthedocs.io/en/stable/api_input.html#distancesensor-hc-sr04)도 확인한다.
 
