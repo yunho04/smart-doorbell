@@ -1,11 +1,96 @@
-# IoT
+# 근접 감지 및 사진 로컬 저장
 
-Raspberry Pi 기반 IoT 모듈입니다.
+이번 구현은 HC-SR04 거리 측정 → Camera Module 3 활성화 → 사진 한 장 저장까지다. 초음파 센서는 사람과 다른 물체를 구분하지 않는다. HC-SR501, 사람 인식, 서버, MQTT, HTTP, Event ID는 구현 범위가 아니다. 실제 Pi의 OS·Python·센서·카메라·배선 및 동작은 아직 검증하지 않았다. 아래 GPIO와 임계값은 보정 전 개발 예시다.
 
-주요 역할:
-- 접근 감지 센서
-- 충격 센서
-- Camera
-- Microphone
-- Speaker
-- Spring Boot 서버와 HTTP 통신
+## 노트북에서 모의 검증
+
+이 디렉터리(`smart-doorbell/iot`)에서 Python 3.9 이상으로 실행한다. 외부 패키지는 필요 없다. `MOCK` 로그와 `captures/MOCK_*.png`는 카메라 사진이 아니라 프로그램이 생성한 모의 이미지다.
+
+```bash
+cd smart-doorbell/iot
+python3 -m unittest discover -s tests -v
+python3 -m proximity_camera run --mode mock --max-captures 1
+python3 -m proximity_camera sensor --mode mock
+python3 -m proximity_camera camera --mode mock
+```
+
+기본 모의 입력은 가까워짐, 유지, 오류, 멀어짐, 재접근을 포함하며 입력이 끝나면 종료한다. 실제 시간 조건으로 재무장하려면 멀리 있는 상태가 쿨다운을 만족하도록 설정해야 한다. 설정 변경 시 `cp config.example.json config.local.json`으로 복사한 뒤 수정하고 다음처럼 실행한다. 경로는 실행 디렉터리 기준이다.
+
+```bash
+python3 -m proximity_camera run --mode mock --config config.local.json --max-captures 1
+```
+
+`--max-captures`는 성공 수가 아니라 촬영 시도 횟수 상한이다. 생략하면 모의 입력 끝 또는 Ctrl+C까지 실행한다. 파일에 설정되지 않은 항목은 기본값을 쓴다. `camera_width`, `camera_height`, `camera_af_timeout_s`, `camera_capture_timeout_s`, 전체 `camera_timeout_s`를 조정할 수 있다. `config.local.json`에 비밀번호를 넣지 않는다.
+
+## 학교 Pi 준비: 2026-11-17
+
+1. Pi 전원을 끈 후 Camera Module 3를 Pi 4 `CAMERA` CSI 커넥터에 맞는 표준 15핀 케이블로 연결한다. 양끝 케이블 방향과 접점은 [공식 연결 그림](https://www.raspberrypi.com/documentation/accessories/camera.html)으로 확인한다.
+2. Pi를 켜고 SSH로 접속한다. 예: `ssh ee333@doorbell.local`. 접속이 안 되면 Pi의 실제 IP와 SSH 서비스 상태를 확인한다. Pi에서 아래 명령을 실행하여 실제 OS·Python 및 카메라 인식을 기록한다.
+
+```bash
+cat /etc/os-release
+python3 --version
+hostname -I
+rpicam-hello --list-cameras
+rpicam-still -n --autofocus-on-capture -o test.jpg
+```
+
+사진을 열어 초점과 방향을 확인한다. 명령이 없다면 OS의 패키지와 지원 여부를 확인한다. 아래는 Raspberry Pi OS의 설치 예시이며 OS 버전에 따라 패키지 가용성을 확인한다. 시스템 Python을 임의 교체하지 않는다.
+
+```bash
+sudo apt update
+sudo apt install git python3-picamera2 python3-gpiozero python3-lgpio python3-venv rpicam-apps
+```
+
+카메라/GPIO 패키지를 pip로 전역 설치하지 않는다. Python 3.13은 목표이며 실제 OS 제공 버전과 패키지 호환성은 아직 미확인이다.
+
+3. 센서와 저항의 실제 표기·값을 확인하고 전원을 끈 상태에서 배선한다. 아래는 **미검증 개발 예시**이며 BCM 번호와 물리 핀 번호를 구분한다. 일반 HC-SR04의 ECHO는 5V이므로 GPIO에 직접 연결하지 않는다. [GPIO Zero 공식 HC-SR04 배선](https://gpiozero.readthedocs.io/en/stable/api_input.html#distancesensor-hc-sr04)도 확인한다.
+
+```text
+HC-SR04 VCC  ─────────────────── Pi 5V (물리 2)
+HC-SR04 GND  ─────────────────── Pi GND (물리 6)
+HC-SR04 TRIG ─────────────────── Pi BCM23 (물리 16)
+HC-SR04 ECHO ── 330Ω ──┬──────── Pi BCM24 (물리 18)
+                       └── 470Ω ─ Pi GND (예: 물리 9)
+```
+
+4. Pi에서 IoT 기능 브랜치를 클론한다. 아래는 `~/smart-doorbell`이 아직 없는 경우다. 이전에 복사한 `~/iot`가 있다면 어느 폴더에서 실행하는지 구분한다.
+
+```bash
+# Pi에서
+cd ~
+git clone --branch codex/iot-proximity-camera --single-branch https://github.com/yunho04/smart-doorbell.git
+cd ~/smart-doorbell/iot
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
+python3 -m proximity_camera run --mode mock --max-captures 1
+python3 -m proximity_camera camera --mode hardware
+python3 -m proximity_camera sensor --mode hardware
+python3 -m proximity_camera run --mode hardware --max-captures 1
+```
+
+이미 `~/smart-doorbell`을 클론했다면 덮어쓰지 말고 변경사항을 먼저 확인한 뒤 브랜치를 선택한다.
+
+```bash
+cd ~/smart-doorbell
+git status
+git fetch origin
+git switch codex/iot-proximity-camera
+```
+
+로컬에 브랜치가 없으면 `git switch`는 일치하는 원격 추적 브랜치에서 생성한다. 여러 원격 때문에 자동 선택되지 않는 경우 `git switch --track origin/codex/iot-proximity-camera`를 사용한다. 로컬 수정이 있으면 보존하고 전환하며, `reset --hard`로 덮어쓰지 않는다.
+
+이후 노트북에서 수정·검증·푸시한 코드는 Pi에서 다음처럼 업데이트한다. 개인 설정과 촬영 이미지는 Git에서 제외되어 있다.
+
+```bash
+cd ~/smart-doorbell
+git pull --ff-only
+cd iot
+source .venv/bin/activate
+```
+
+카메라 단독 → 센서 단독으로 값을 확인하고 통합 실행한다. 기본값은 50cm 이하 연속 3회에서 한 번 촬영하고 촬영 시도 후 70cm 이상 연속 3회와 5초 쿨다운을 모두 충족하면 재무장한다. 중간값과 오류는 연속 횟수를 초기화하고 오류로 재무장하지 않는다. 촬영이 실패해도 접근이 유지되는 동안 재시도하지 않는다. 촬영은 동기 처리이므로 그동안 거리 측정이 멈춘다. 설치 위치와 물체에 따라 GPIO·거리·시간은 조정해야 한다. Ctrl+C로 종료한다.
+
+사진은 기본 `captures/`에 저장한다. 기본 보관 한도는 파일 100개, 전체 100MiB, 촬영 파일당 10MiB, 여유 공간 100MiB 이상이다. 한도에 닿으면 촬영을 거절하며 기존 파일은 삭제하지 않는다. 실패한 임시 파일은 작업자 종료 후 삭제한다. 공간 확보는 사용자가 사진을 확인한 뒤 직접 수행한다. `request_id`는 로컬 촬영 시도 식별자이며 서버 Event ID가 아니다. `echo timeout`은 센서 미응답, `echo already high`는 ECHO 상태 이상, `autofocus failed`는 초점 실패를 뜻한다. 배선·전원과 단독 명령 결과를 확인한다. SIGTERM 종료도 정리를 시도하지만 강제 종료나 전원 차단 시 남은 임시 파일은 수동 확인이 필요하다.
+
+작업 공유 브랜치는 `codex/iot-proximity-camera`다. 노트북에서 개발·모의 검증 후 이 브랜치에 푸시하고 Pi에서 실제 하드웨어를 검증한다. 팀원 상호 검증 후 `main`에 병합한다.
