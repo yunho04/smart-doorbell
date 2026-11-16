@@ -2,8 +2,8 @@ import json
 import math
 
 DEFAULTS = {
-    "trigger_bcm": 23, "echo_bcm": 24, "near_cm": 50, "far_cm": 70,
-    "consecutive": 3, "cooldown_s": 5, "interval_s": 0.1,
+    "sensor_backend": "rpi_gpio", "trigger_bcm": 20, "echo_bcm": 16, "near_cm": 50, "far_cm": 70,
+    "consecutive": 3, "cooldown_s": 5, "interval_s": 0.5, "sensor_settle_s": 0.2, "trigger_pulse_s": 0.01,
     "echo_timeout_s": 0.1, "output_dir": "captures", "max_files": 100,
     "max_total_bytes": 104857600, "max_file_bytes": 10485760,
     "min_free_bytes": 104857600, "camera_timeout_s": 20,
@@ -21,12 +21,16 @@ def load_config(path=None):
         if not isinstance(supplied, dict) or set(supplied) - set(config):
             raise ValueError("config must be an object with known keys")
         config.update(supplied)
-    for key in ("near_cm", "far_cm", "cooldown_s", "interval_s", "echo_timeout_s", "camera_timeout_s", "camera_af_timeout_s", "camera_capture_timeout_s", "settle_s"):
+    for key in ("near_cm", "far_cm", "cooldown_s", "interval_s", "echo_timeout_s", "sensor_settle_s", "trigger_pulse_s", "camera_timeout_s", "camera_af_timeout_s", "camera_capture_timeout_s", "settle_s"):
         v = config[key]
         if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0:
             raise ValueError("invalid " + key)
     if not 2 <= config["near_cm"] < config["far_cm"] <= 400 or not 0 < config["echo_timeout_s"] <= 0.1 or config["interval_s"] < 0.06 or config["camera_timeout_s"] <= 0 or config["camera_af_timeout_s"] <= 0 or config["camera_capture_timeout_s"] <= 0:
         raise ValueError("invalid thresholds or timing")
+    if config["sensor_backend"] not in ("rpi_gpio", "lgpio"):
+        raise ValueError("invalid sensor_backend")
+    if not 0.00001 <= config["trigger_pulse_s"] <= 0.01:
+        raise ValueError("invalid sensor timing")
     for key in ("trigger_bcm", "echo_bcm", "consecutive", "max_files", "max_total_bytes", "max_file_bytes", "min_free_bytes", "camera_width", "camera_height"):
         v = config[key]
         if isinstance(v, bool) or not isinstance(v, int) or v < (0 if key in ("trigger_bcm", "echo_bcm", "min_free_bytes") else 1):

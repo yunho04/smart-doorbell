@@ -6,7 +6,7 @@ import time
 from .camera import Camera, worker, worker_signal
 from .config import load_config
 from .controller import Controller
-from .sensor import HCSR04, MockSensor
+from .sensor import HCSR04, MockSensor, RPiGPIOHCSR04
 
 
 def _shutdown_signal(signum, frame):
@@ -49,7 +49,15 @@ def main(argv=None):
             path = camera.capture(request_id)
             logging.info("capture request_id=%s result=success path=%s", request_id, path)
             return 0
-        sensor = MockSensor(cfg["mock_readings"]) if args.mode == "mock" else HCSR04(cfg["trigger_bcm"], cfg["echo_bcm"], cfg["echo_timeout_s"])
+        if args.mode == "mock":
+            sensor = MockSensor(cfg["mock_readings"])
+        else:
+            logging.info("sensor backend=%s trigger_bcm=%s echo_bcm=%s settle_s=%s pulse_s=%s interval_s=%s echo_timeout_s=%s",
+                         cfg["sensor_backend"], cfg["trigger_bcm"], cfg["echo_bcm"], cfg["sensor_settle_s"],
+                         cfg["trigger_pulse_s"], cfg["interval_s"], cfg["echo_timeout_s"])
+            sensor_class = RPiGPIOHCSR04 if cfg["sensor_backend"] == "rpi_gpio" else HCSR04
+            sensor = sensor_class(cfg["trigger_bcm"], cfg["echo_bcm"], cfg["echo_timeout_s"],
+                                  settle=cfg["sensor_settle_s"], pulse=cfg["trigger_pulse_s"])
         controller = Controller(sensor, camera, cfg)
         try:
             while True:

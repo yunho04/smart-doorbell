@@ -7,7 +7,8 @@ from pathlib import Path
 from proximity_camera.camera import Camera, worker
 from proximity_camera.config import DEFAULTS, load_config
 from proximity_camera.controller import Controller
-from proximity_camera.sensor import HCSR04, Reading
+from proximity_camera.sensor import HCSR04, RPiGPIOHCSR04, Reading
+from unittest.mock import patch
 
 class StubCamera:
     def __init__(self): self.calls = 0; self.fail = False
@@ -72,6 +73,96 @@ class SensorTests(unittest.TestCase):
         self.assertAlmostEqual(result.distance_cm, 8.575)
     def test_falling_first_invalid(self):
         self.assertIsNone(self.run_edges([(100.0001, False)]).distance_cm)
+
+class FakeClock:
+    def __init__(self): self.now = 0
+    def __call__(self): return self.now
+    def sleep(self, seconds): self.now += seconds
+
+class FakeGPIO:
+    BCM, OUT, IN, LOW, HIGH, PUD_OFF = 'BCM', 'OUT', 'IN', 0, 1, 'OFF'
+    def __init__(self, clock, values):
+        self.clock, self.values = clock, iter(values)
+        self.last = 0; self.outputs = []; self.cleaned = []; self.setup_calls = []
+    def setmode(self, mode): self.mode = mode
+    def setup(self, pin, mode, **kwargs): self.setup_calls.append((pin, mode, kwargs))
+    def output(self, pin, value): self.outputs.append((self.clock.now, pin, value))
+    def input(self, pin):
+        self.clock.now += .0001
+        self.last = next(self.values, self.last)
+        return self.last
+    def cleanup(self, pins): self.cleaned.append(list(pins))
+
+class PollingSensorTests(unittest.TestCase):
+    def make(self, values, **kwargs):
+        clock = FakeClock(); gpio = FakeGPIO(clock, values)
+        sensor = RPiGPIOHCSR04(20, 16, timeout=.001, settle=0, pulse=.00001,
+                              gpio=gpio, clock=clock, sleep=clock.sleep, **kwargs)
+        return sensor, gpio, clock
+    def test_fresh_pulse(self):
+        s, gpio, _ = self.make([0, 0, 1, 1, 1, 1, 1, 0])
+        result = s.read()
+        self.assertAlmostEqual(result.distance_cm, 8.575)
+        s.close(); s.close()
+        self.assertEqual(gpio.cleaned, [[20, 16]])
+        self.assertEqual(gpio.setup_calls[1][2]['pull_up_down'], gpio.PUD_OFF)
+        with self.assertRaisesRegex(RuntimeError, 'closed'): s.read()
+    def test_faults(self):
+        for values, error in [([1], 'already high'), ([0], 'rise timeout'),
+                              ([0, 1], 'fall timeout'), ([0, 1, 0], 'out of range')]:
+            with self.subTest(error=error):
+                s, gpio, _ = self.make(values)
+                result = s.read(); self.assertIsNone(result.distance_cm); self.assertIn(error, result.error)
+                s.close()
+    def test_trigger_spacing(self):
+        s, gpio, _ = self.make([0,1,1,1,1,1,0,0,1,1,1,1,1,0])
+        s.read(); s.read(); s.close()
+        highs = [t for t, _, v in gpio.outputs if v == gpio.HIGH]
+        self.assertGreaterEqual(highs[1]-highs[0], .06)
+    def test_interrupt_forces_low(self):
+        s, gpio, _ = self.make([0])
+        s.sleep = lambda _: (_ for _ in ()).throw(KeyboardInterrupt()) if gpio.outputs and gpio.outputs[-1][2] == gpio.HIGH else None
+        with self.assertRaises(KeyboardInterrupt): s.read()
+        self.assertEqual(gpio.outputs[-1][2], gpio.LOW)
+        s.close()
+    def test_setup_failure_cleans_only_successful_pin(self):
+        clock = FakeClock(); gpio = FakeGPIO(clock, [])
+        def setup(pin, mode, **kwargs):
+            if pin == 16: raise RuntimeError('setup failure')
+        gpio.setup = setup
+        with self.assertRaisesRegex(RuntimeError, 'setup failure'):
+            RPiGPIOHCSR04(20, 16, gpio=gpio, clock=clock, sleep=clock.sleep)
+        self.assertEqual(gpio.cleaned, [[20]])
+
+class SensorConfigTests(unittest.TestCase):
+    def test_invalid_backend_and_timing(self):
+        for update in ({'sensor_backend':'bad'}, {'trigger_pulse_s':0}, {'trigger_pulse_s':.011},
+                       {'sensor_settle_s':-1}, {'sensor_settle_s':float('inf')}):
+            with self.subTest(update=update), tempfile.TemporaryDirectory() as d:
+                p=Path(d)/'config.json'; p.write_text(json.dumps(update))
+                with self.assertRaises(ValueError): load_config(p)
+    def test_existing_config_and_example_remain_usable(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / 'old.json'
+            p.write_text(json.dumps({'trigger_bcm': 23, 'echo_bcm': 24, 'interval_s': .1}))
+            old = load_config(p)
+            self.assertEqual((old['trigger_bcm'], old['echo_bcm'], old['interval_s']), (23, 24, .1))
+            self.assertEqual((old['sensor_backend'], old['sensor_settle_s'], old['trigger_pulse_s']), ('rpi_gpio', .2, .01))
+        example = load_config(Path(__file__).resolve().parents[1] / 'config.example.json')
+        self.assertEqual((example['trigger_bcm'], example['echo_bcm'], example['interval_s']), (20, 16, .5))
+        self.assertEqual((example['sensor_backend'], example['sensor_settle_s'], example['trigger_pulse_s']), ('rpi_gpio', .2, .01))
+    def test_backend_selection(self):
+        from proximity_camera import __main__ as cli
+        class FakeSensor:
+            def __init__(self, *args, **kwargs): self.args=args; self.kwargs=kwargs
+            def read(self): raise StopIteration
+            def close(self): pass
+        for backend, name in [('rpi_gpio','RPiGPIOHCSR04'), ('lgpio','HCSR04')]:
+            with self.subTest(backend=backend), tempfile.TemporaryDirectory() as d:
+                p=Path(d)/'config.json'; p.write_text(json.dumps({'sensor_backend':backend}))
+                with patch.object(cli, name, wraps=FakeSensor) as selected:
+                    self.assertEqual(cli.main(['sensor','--mode','hardware','--config',str(p)]),0)
+                    selected.assert_called_once_with(20,16,.1,settle=.2,pulse=.01)
 
 class CameraTests(unittest.TestCase):
     def test_storage_and_mock(self):

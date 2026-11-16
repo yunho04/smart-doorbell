@@ -1,20 +1,20 @@
 # 근접 감지 및 사진 로컬 저장
 
-이번 구현은 HC-SR04 거리 측정 → Camera Module 3 활성화 → 사진 한 장 저장까지다. 초음파 센서는 사람과 다른 물체를 구분하지 않는다. HC-SR501, 사람 인식, 서버, MQTT, HTTP, Event ID는 구현 범위가 아니다. 실제 Pi의 OS·Python 버전은 사용자 출력으로 확인했으며 센서·카메라·배선 및 동작은 아직 검증하지 않았다. 아래 GPIO와 임계값은 보정 전 개발 예시다.
+이번 구현은 HC-SR04 거리 측정 → Camera Module 3 활성화 → 사진 한 장 저장까지다. 초음파 센서는 사람과 다른 물체를 구분하지 않는다. HC-SR501, 사람 인식, 서버, MQTT, HTTP, Event ID는 구현 범위가 아니다. 2026-11-17 사용자는 별도 튜토리얼의 RPi.GPIO 폴링으로 센서 측정에 성공했고 Camera Module 3가 정상 동작한다고 보고했다. 이 앱의 새 센서 경로와 통합 촬영은 실제 Pi에서 아직 검증하지 않았다. 사용자는 같은 날 ECHO가 분압 없이 GPIO16에 직결되어 있다고 확인했다. 보호 회로의 추가와 검증은 아직 완료되지 않았다.
 
 ## 실행 요구사항
 
 | 구분 | 요구사항과 확인 상태 |
 |---|---|
 | 모의 실행·테스트 | Python 3.9 이상, 표준 라이브러리만 사용 |
-| 실제 Pi | OS 제공 Python과 아래 APT 패키지, CSI 카메라와 HC-SR04. 사용자 출력 기준 Python 3.13.5, OS 표기는 Debian GNU/Linux 13(trixie), `DEBIAN_VERSION_FULL=13.7`. 패키지 설치·실제 하드웨어 동작은 미검증 |
+| 실제 Pi | OS 제공 Python과 아래 APT 패키지, CSI 카메라와 HC-SR04. 사용자 출력 기준 Python 3.13.5, OS 표기는 Debian GNU/Linux 13(trixie), `DEBIAN_VERSION_FULL=13.7`. 앱의 패키지 호환성과 통합 동작은 미검증 |
 | 프로젝트 목표 | SAD의 Python 3.13 목표와 실제 Pi의 3.13.5가 일치. 시스템 Python을 그대로 사용 |
 
 위 실제 환경 정보는 2026-11-16 사용자가 전달한 `python3 --version`, `cat /etc/os-release` 결과다. 이후 같은 Pi의 Python 3.13.5에서 `python3 -m unittest discover -s tests -v` 테스트 14개가 1.108초에 모두 통과한 출력을 확인했다. 개발용 Mac의 Python 3.9.6에서도 같은 14개가 통과했다. 테스트는 모의 센서·카메라와 오류 처리를 검증하며 실제 배선·센서 측정·카메라 촬영 성공을 의미하지 않는다.
 
 `test_failure_does_not_retry_held`에서 출력되는 `ERROR:root: ... result=failed reason=failed`는 의도적으로 촬영 실패를 발생시키는 테스트의 예상 로그다. 해당 테스트의 `ok`와 전체 결과 `OK`로 통과 여부를 확인한다.
 
-`pyproject.toml`의 `requires-python = ">=3.9"`는 패키지를 pip로 설치할 때 검사하는 메타데이터다. `python3 -m`으로 직접 실행할 때 이 조건을 강제하지 않으므로 `python3 --version`으로 직접 확인한다. pip 설치는 필수가 아니다. Pi의 카메라·GPIO 패키지는 `requirements-apt.txt`에서 관리하며 pip requirements에는 넣지 않는다. OS별 패키지 가용성과 native libcamera 연동은 실제 Pi에서 확인한다. 시스템 Python을 교체하지 않는다.
+`pyproject.toml`의 `requires-python = ">=3.9"`는 패키지를 pip로 설치할 때 검사하는 메타데이터다. `python3 -m`으로 직접 실행할 때 이 조건을 강제하지 않으므로 `python3 --version`으로 직접 확인한다. pip 설치는 필수가 아니다. Pi의 공통 카메라·GPIO 패키지는 `requirements-apt.txt`, 필요한 경우에만 설치할 원본 RPi.GPIO는 `requirements-apt-rpi-gpio.txt`에서 관리하며 pip requirements에는 넣지 않는다. OS별 패키지 가용성과 native libcamera 연동은 실제 Pi에서 확인한다. 시스템 Python을 교체하지 않는다.
 
 ## 노트북에서 모의 검증
 
@@ -49,6 +49,8 @@ cd ~
 git clone --branch jeongwon/iot-proximity-camera --single-branch https://github.com/yunho04/smart-doorbell.git
 cd ~/smart-doorbell/iot
 xargs -r -a requirements-apt.txt sudo apt install --
+# RPi.GPIO가 이미 동작하면 해당 제공자를 유지한다. 없을 때만 아래 패키지를 설치한다.
+python3 -c "import RPi.GPIO" || xargs -r -a requirements-apt-rpi-gpio.txt sudo apt install --
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 cat /etc/os-release
@@ -58,9 +60,24 @@ rpicam-hello --list-cameras
 rpicam-still -n --autofocus-on-capture -o test.jpg
 ```
 
-설치는 Raspberry Pi OS 기준 예시다. 패키지 오류가 나면 실제 OS의 패키지 저장소와 지원 여부를 확인한다. 카메라 사진을 열어 초점과 방향을 확인한다. 현재 Pi의 Python은 3.13.5로 확인했으나 카메라·GPIO 패키지 설치와 호환성은 아직 미검증이다.
+설치는 Raspberry Pi OS 기준 예시다. 패키지 오류가 나면 실제 OS의 패키지 저장소와 지원 여부를 확인한다. 카메라 사진을 열어 초점과 방향을 확인한다. 현재 Pi의 Python은 3.13.5로 확인했다. 새 앱의 카메라·GPIO 패키지 호환성은 아직 미검증이다. `python3-rpi.gpio`는 [Debian trixie 패키지](https://packages.debian.org/trixie/python3-rpi.gpio)다. 기존 `RPi.GPIO`가 작동하면 재설치하지 않는다. `rpi-lgpio` 호환 래퍼와 원본 RPi.GPIO는 동시에 설치하지 않는다([설치 문서](https://rpi-lgpio.readthedocs.io/en/latest/install.html)); 기존 패키지를 임의로 제거하지 않는다.
 
 3. 센서와 저항의 실제 표기·값을 확인하고 전원을 끈 상태에서 배선한다. 아래는 **미검증 개발 예시**이며 BCM 번호와 물리 핀 번호를 구분한다. 일반 HC-SR04의 ECHO는 5V이므로 GPIO에 직접 연결하지 않는다. [GPIO Zero 공식 HC-SR04 배선](https://gpiozero.readthedocs.io/en/stable/api_input.html#distancesensor-hc-sr04)도 확인한다.
+
+현재 사용자 동작 보고의 핀은 TRIG BCM20(물리 38), ECHO BCM16(물리 36)이다. 센서 ECHO는 GPIO에 직결하지 말고 아래와 같이 분압하거나 적절한 레벨 변환을 사용한다. 제시된 튜토리얼 그림의 LED 저항은 ECHO 분압기가 아니다. 현재 직결 상태이므로 측정을 중지하고 `sudo poweroff` 후 전원 케이블을 분리한다. 전원이 꺼진 상태에서 보호 회로를 추가하고 배선·전압을 확인하기 전까지 하드웨어 테스트를 진행하지 않는다.
+
+```text
+HC-SR04 VCC  ─────────────────── Pi 5V (물리 2)
+HC-SR04 GND  ─────────────────── Pi GND (물리 6)
+HC-SR04 TRIG ─────────────────── Pi BCM20 (물리 38)
+HC-SR04 ECHO ── 1kΩ ──┬───────── Pi BCM16 (물리 36)
+                      └── 1kΩ ── 220Ω ── 공통 GND
+```
+
+명목 5V에서 출력은 약 2.75V다. 저항값과 실제 연결·전압을 확인한다. 아래 이전 그림들은 **BCM23/24 배선 이력**으로, 현재 기본 핀과 다르다.
+
+<details>
+<summary>이전 BCM23/24 배선 예시와 그림</summary>
 
 현재 보유 부품 중 **1kΩ 2개와 220Ω 1개가 있으면 아래 구성을 우선 사용**한다. ECHO에서 GND까지 저항 세 개를 직렬로 연결하고 첫 번째 1kΩ 뒤의 중간점을 Pi BCM24(물리18)에 연결한다. 중간점에서 GND까지는 1kΩ+220Ω=1.22kΩ이며 명목 5V 입력에서 `5 × 1220 / (1000 + 1220) ≈ 2.75V`다. 1kΩ을 병렬로 연결하는 구성이 아니다.
 
@@ -88,10 +105,7 @@ ECHO ── 1kΩ ──┬── Pi BCM24 (물리 18)
 | 센서 TRIG / Pi BCM23(물리 16) | 각각 A12 / E12 |
 | 센서 VCC | Pi 5V(물리 2)에 직접 연결 |
 
-센서는 세로로 돌려 표시했으므로 실물의 핀 글자를 기준으로 연결한다. GPIO 그림은 물리 번호 확대도이며 실제 보드의 1번 핀 위치를 먼저 확인한다. 같은 행 A–E와 F–J는 각각 연결되며 가운데 틈 양쪽은 별개다. 전선의 교차·구멍 위 통과는 접속이 아니고, 전선 양끝과 표시한 점만 접속점이다. 이전 그림과 출력·GND 행이 달라졌으므로 한 그림의 좌표를 일관되게 따른다. 기존 구성을 올바르게 배선했다면 새 값으로 바꿀 필요는 없으며 코드의 GPIO 번호도 동일하다.
-
-<details>
-<summary>이전 저항 조합과 배선 예시 보기</summary>
+센서는 세로로 돌려 표시했으므로 실물의 핀 글자를 기준으로 연결한다. GPIO 그림은 물리 번호 확대도이며 실제 보드의 1번 핀 위치를 먼저 확인한다. 같은 행 A–E와 F–J는 각각 연결되며 가운데 틈 양쪽은 별개다. 전선의 교차·구멍 위 통과는 접속이 아니고, 전선 양끝과 표시한 점만 접속점이다. 이전 그림과 출력·GND 행이 달라졌으므로 한 그림의 좌표를 일관되게 따른다. 이 설명은 이전 BCM23/24 그림끼리의 비교이며 현재 기본 BCM20/16과는 다르다.
 
 ```text
 HC-SR04 VCC  ─────────────────── Pi 5V (물리 2)
@@ -140,7 +154,7 @@ HC-SR04 ECHO
 
 </details>
 
-4. Pi 전원을 켜고 SSH로 다시 접속한 뒤 다음 순서로 모의 실행, 카메라 단독, 센서 단독, 통합을 확인한다.
+4. 위 보호 회로를 추가하고 배선·전압을 확인한 후 Pi 전원을 켜고 SSH로 다시 접속한 뒤 다음 순서로 모의 실행, 카메라 단독, 센서 단독, 통합을 확인한다. 이전 `config.local.json`의 BCM23/24 또는 `interval_s` 값은 기본값을 덮어쓴다. 해당 파일을 열어 `trigger_bcm: 20`, `echo_bcm: 16`과 원하는 설정으로 수정하거나, 파일을 사용하지 않을 때는 `--config`를 생략한다. 기존 개인 설정을 덮어쓰지 않는다.
 
 ```bash
 cd ~/smart-doorbell/iot
@@ -182,8 +196,10 @@ cd iot
 source .venv/bin/activate
 ```
 
+기본 센서 백엔드는 `rpi_gpio`, 매 측정 전 대기 `sensor_settle_s=0.2`, TRIG HIGH `trigger_pulse_s=0.01`, 반복 대기 `interval_s=0.5`, 상승·하강 각각 제한 `echo_timeout_s=0.1`초다. 이 타이밍은 사용자가 성공을 보고한 튜토리얼 프로필이며 모든 HC-SR04에 보편적인 규격이라는 뜻은 아니다. 최소 트리거 간격은 0.06초다. 거리 계산은 음속 34300cm/s를 사용한다. `sensor_backend`를 `lgpio`로 설정하면 기존 콜백 방식을 선택할 수 있으며 자동 전환하지 않는다. 기존 콜백의 타임아웃 원인은 확정되지 않았다. 폴링은 스케줄링 때문에 펄스를 놓치거나 거리 오차가 생길 수 있다.
+
 카메라 단독 → 센서 단독으로 값을 확인하고 통합 실행한다. 기본값은 50cm 이하 연속 3회에서 한 번 촬영하고 촬영 시도 후 70cm 이상 연속 3회와 5초 쿨다운을 모두 충족하면 재무장한다. 중간값과 오류는 연속 횟수를 초기화하고 오류로 재무장하지 않는다. 촬영이 실패해도 접근이 유지되는 동안 재시도하지 않는다. 촬영은 동기 처리이므로 그동안 거리 측정이 멈춘다. 설치 위치와 물체에 따라 GPIO·거리·시간은 조정해야 한다. Ctrl+C로 종료한다.
 
-사진은 기본 `captures/`에 저장한다. 기본 보관 한도는 파일 100개, 전체 100MiB, 촬영 파일당 10MiB, 여유 공간 100MiB 이상이다. 한도에 닿으면 촬영을 거절하며 기존 파일은 삭제하지 않는다. 실패한 임시 파일은 작업자 종료 후 삭제한다. 공간 확보는 사용자가 사진을 확인한 뒤 직접 수행한다. `request_id`는 로컬 촬영 시도 식별자이며 서버 Event ID가 아니다. `echo timeout`은 센서 미응답, `echo already high`는 ECHO 상태 이상, `autofocus failed`는 초점 실패를 뜻한다. 배선·전원과 단독 명령 결과를 확인한다. SIGTERM 종료도 정리를 시도하지만 강제 종료나 전원 차단 시 남은 임시 파일은 수동 확인이 필요하다.
+사진은 기본 `captures/`에 저장한다. 기본 보관 한도는 파일 100개, 전체 100MiB, 촬영 파일당 10MiB, 여유 공간 100MiB 이상이다. 한도에 닿으면 촬영을 거절하며 기존 파일은 삭제하지 않는다. 실패한 임시 파일은 작업자 종료 후 삭제한다. 공간 확보는 사용자가 사진을 확인한 뒤 직접 수행한다. `request_id`는 로컬 촬영 시도 식별자이며 서버 Event ID가 아니다. `echo rise timeout`과 `echo fall timeout`은 각각 상승·하강을 제한 시간 내 관찰하지 못한 경우이고, 기존 lgpio의 `echo timeout`은 유효한 펄스를 얻지 못한 경우다. `echo already high`는 ECHO 상태 이상, `autofocus failed`는 초점 실패를 뜻한다. 배선·전원과 단독 명령 결과를 확인한다. SIGTERM 종료도 정리를 시도하지만 강제 종료나 전원 차단 시 남은 임시 파일은 수동 확인이 필요하다.
 
 작업 공유 브랜치는 **`jeongwon/iot-proximity-camera`**다. 앞으로 새 작업 브랜치의 접두사도 `jeongwon/`을 사용한다. 이전 `codex/iot-proximity-camera`의 코드·커밋 이력을 그대로 이어받았으며, 기존 브랜치는 이력 보존용으로 남긴다. 노트북에서 개발·모의 검증 후 새 브랜치에 푸시하고 Pi에서 실제 하드웨어를 검증한다. 팀원 상호 검증 후 `main`에 병합한다.

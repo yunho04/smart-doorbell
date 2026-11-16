@@ -1,11 +1,11 @@
 {
-  "trigger_bcm": 23,
-  "echo_bcm": 24,
+  "trigger_bcm": 20,
+  "echo_bcm": 16,
   "near_cm": 50,
   "far_cm": 70,
   "consecutive": 3,
   "cooldown_s": 5,
-  "interval_s": 0.1,
+  "interval_s": 0.5,
   "echo_timeout_s": 0.1,
   "output_dir": "captures",
   "max_files": 100,
@@ -31,5 +31,8 @@
     45,
     40,
     35
-  ]
+  ],
+  "sensor_backend": "rpi_gpio",
+  "sensor_settle_s": 0.2,
+  "trigger_pulse_s": 0.01
 }
