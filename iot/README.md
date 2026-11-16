@@ -10,7 +10,9 @@
 | 실제 Pi | OS 제공 Python과 아래 APT 패키지, CSI 카메라와 HC-SR04. 사용자 출력 기준 Python 3.13.5, OS 표기는 Debian GNU/Linux 13(trixie), `DEBIAN_VERSION_FULL=13.7`. 패키지 설치·실제 하드웨어 동작은 미검증 |
 | 프로젝트 목표 | SAD의 Python 3.13 목표와 실제 Pi의 3.13.5가 일치. 시스템 Python을 그대로 사용 |
 
-위 실제 환경 정보는 2026-11-16 사용자가 전달한 `python3 --version`, `cat /etc/os-release` 결과다. Python 3.13.5에서 프로젝트 테스트와 촬영을 실행한 결과를 뜻하지 않는다. 개발용 Mac에서 Python 3.9.6으로 테스트 14개가 통과한 기록과 구분한다.
+위 실제 환경 정보는 2026-11-16 사용자가 전달한 `python3 --version`, `cat /etc/os-release` 결과다. 이후 같은 Pi의 Python 3.13.5에서 `python3 -m unittest discover -s tests -v` 테스트 14개가 1.108초에 모두 통과한 출력을 확인했다. 개발용 Mac의 Python 3.9.6에서도 같은 14개가 통과했다. 테스트는 모의 센서·카메라와 오류 처리를 검증하며 실제 배선·센서 측정·카메라 촬영 성공을 의미하지 않는다.
+
+`test_failure_does_not_retry_held`에서 출력되는 `ERROR:root: ... result=failed reason=failed`는 의도적으로 촬영 실패를 발생시키는 테스트의 예상 로그다. 해당 테스트의 `ok`와 전체 결과 `OK`로 통과 여부를 확인한다.
 
 `pyproject.toml`의 `requires-python = ">=3.9"`는 패키지를 pip로 설치할 때 검사하는 메타데이터다. `python3 -m`으로 직접 실행할 때 이 조건을 강제하지 않으므로 `python3 --version`으로 직접 확인한다. pip 설치는 필수가 아니다. Pi의 카메라·GPIO 패키지는 `requirements-apt.txt`에서 관리하며 pip requirements에는 넣지 않는다. OS별 패키지 가용성과 native libcamera 연동은 실제 Pi에서 확인한다. 시스템 Python을 교체하지 않는다.
 
