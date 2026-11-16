@@ -2,6 +2,16 @@
 
 이번 구현은 HC-SR04 거리 측정 → Camera Module 3 활성화 → 사진 한 장 저장까지다. 초음파 센서는 사람과 다른 물체를 구분하지 않는다. HC-SR501, 사람 인식, 서버, MQTT, HTTP, Event ID는 구현 범위가 아니다. 실제 Pi의 OS·Python·센서·카메라·배선 및 동작은 아직 검증하지 않았다. 아래 GPIO와 임계값은 보정 전 개발 예시다.
 
+## 실행 요구사항
+
+| 구분 | 요구사항과 확인 상태 |
+|---|---|
+| 모의 실행·테스트 | Python 3.9 이상, 표준 라이브러리만 사용 |
+| 실제 Pi | Raspberry Pi OS가 제공하는 Python과 아래 APT 패키지, CSI 카메라와 HC-SR04. 실제 OS·Python·패키지 호환성은 미검증 |
+| 프로젝트 목표 | SAD의 Python 목표는 3.13이며 실제 Pi 버전은 아직 미확인 |
+
+`pyproject.toml`의 `requires-python = ">=3.9"`는 패키지를 pip로 설치할 때 검사하는 메타데이터다. `python3 -m`으로 직접 실행할 때 이 조건을 강제하지 않으므로 `python3 --version`으로 직접 확인한다. pip 설치는 필수가 아니다. Pi의 카메라·GPIO 패키지는 `requirements-apt.txt`에서 관리하며 pip requirements에는 넣지 않는다. OS별 패키지 가용성과 native libcamera 연동은 실제 Pi에서 확인한다. 시스템 Python을 교체하지 않는다.
+
 ## 노트북에서 모의 검증
 
 이 디렉터리(`smart-doorbell/iot`)에서 Python 3.9 이상으로 실행한다. 외부 패키지는 필요 없다. `MOCK` 로그와 `captures/MOCK_*.png`는 카메라 사진이 아니라 프로그램이 생성한 모의 이미지다.
@@ -25,9 +35,18 @@ python3 -m proximity_camera run --mode mock --config config.local.json --max-cap
 ## 학교 Pi 준비: 2026-11-17
 
 1. Pi 전원을 끈 후 Camera Module 3를 Pi 4 `CAMERA` CSI 커넥터에 맞는 표준 15핀 케이블로 연결한다. 양끝 케이블 방향과 접점은 [공식 연결 그림](https://www.raspberrypi.com/documentation/accessories/camera.html)으로 확인한다.
-2. Pi를 켜고 SSH로 접속한다. 예: `ssh ee333@doorbell.local`. 접속이 안 되면 Pi의 실제 IP와 SSH 서비스 상태를 확인한다. Pi에서 아래 명령을 실행하여 실제 OS·Python 및 카메라 인식을 기록한다.
+2. Pi를 켜고 SSH로 접속한다. 예: `ssh ee333@doorbell.local`. 접속이 안 되면 Pi의 실제 IP와 SSH 서비스 상태를 확인한다. 우선 Git을 설치한 뒤 저장소를 클론한다. 아래는 `~/smart-doorbell`이 아직 없는 경우다. 이전에 복사한 `~/iot`가 있다면 어느 폴더에서 실행하는지 구분한다.
 
 ```bash
+# Pi에서
+sudo apt update
+sudo apt install git
+cd ~
+git clone --branch codex/iot-proximity-camera --single-branch https://github.com/yunho04/smart-doorbell.git
+cd ~/smart-doorbell/iot
+xargs -r -a requirements-apt.txt sudo apt install --
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
 cat /etc/os-release
 python3 --version
 hostname -I
@@ -35,14 +54,7 @@ rpicam-hello --list-cameras
 rpicam-still -n --autofocus-on-capture -o test.jpg
 ```
 
-사진을 열어 초점과 방향을 확인한다. 명령이 없다면 OS의 패키지와 지원 여부를 확인한다. 아래는 Raspberry Pi OS의 설치 예시이며 OS 버전에 따라 패키지 가용성을 확인한다. 시스템 Python을 임의 교체하지 않는다.
-
-```bash
-sudo apt update
-sudo apt install git python3-picamera2 python3-gpiozero python3-lgpio python3-venv rpicam-apps
-```
-
-카메라/GPIO 패키지를 pip로 전역 설치하지 않는다. Python 3.13은 목표이며 실제 OS 제공 버전과 패키지 호환성은 아직 미확인이다.
+설치는 Raspberry Pi OS 기준 예시다. 패키지 오류가 나면 실제 OS의 지원 여부와 버전을 확인한다. 카메라 사진을 열어 초점과 방향을 확인한다. Python 3.13은 목표이며 실제 OS 제공 버전과 패키지 호환성은 아직 미확인이다.
 
 3. 센서와 저항의 실제 표기·값을 확인하고 전원을 끈 상태에서 배선한다. 아래는 **미검증 개발 예시**이며 BCM 번호와 물리 핀 번호를 구분한다. 일반 HC-SR04의 ECHO는 5V이므로 GPIO에 직접 연결하지 않는다. [GPIO Zero 공식 HC-SR04 배선](https://gpiozero.readthedocs.io/en/stable/api_input.html#distancesensor-hc-sr04)도 확인한다.
 
@@ -54,19 +66,25 @@ HC-SR04 ECHO ── 330Ω ──┬──────── Pi BCM24 (물리 18)
                        └── 470Ω ─ Pi GND (예: 물리 9)
 ```
 
-4. Pi에서 IoT 기능 브랜치를 클론한다. 아래는 `~/smart-doorbell`이 아직 없는 경우다. 이전에 복사한 `~/iot`가 있다면 어느 폴더에서 실행하는지 구분한다.
+4. Pi 전원을 켜고 SSH로 다시 접속한 뒤 다음 순서로 모의 실행, 카메라 단독, 센서 단독, 통합을 확인한다.
 
 ```bash
-# Pi에서
-cd ~
-git clone --branch codex/iot-proximity-camera --single-branch https://github.com/yunho04/smart-doorbell.git
 cd ~/smart-doorbell/iot
-python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 python3 -m proximity_camera run --mode mock --max-captures 1
 python3 -m proximity_camera camera --mode hardware
 python3 -m proximity_camera sensor --mode hardware
 python3 -m proximity_camera run --mode hardware --max-captures 1
+```
+
+실제 Pi에서 동작을 검증한 후 OS, Python, 설치한 주요 패키지의 버전을 기록한다. 다음 명령은 `iot` 디렉터리에서 실행하며 `environment.local.txt`는 Git에서 제외된다. 이 파일은 검증 당시의 버전 기록이며 의존성을 고정하는 lock 파일은 아니다. 결과에서 주요 검증 버전을 팀 기록에 전달한다.
+
+```bash
+{
+  cat /etc/os-release
+  python3 --version
+  xargs -r -a requirements-apt.txt dpkg-query -W -f='${binary:Package}=${Version}\n'
+} > environment.local.txt
 ```
 
 이미 `~/smart-doorbell`을 클론했다면 덮어쓰지 말고 변경사항을 먼저 확인한 뒤 브랜치를 선택한다.
