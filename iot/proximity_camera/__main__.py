@@ -21,6 +21,7 @@ def main(argv=None):
         p.add_argument("--mode", required=True, choices=("mock", "hardware"))
         p.add_argument("--config")
         if name == "run":
+            p.add_argument("--spring", action="store_true", help="enable real MQTT and Spring HTTP integration")
             p.add_argument("--max-captures", type=int, default=None, help="exit after this many capture attempts")
     p = sub.add_parser("_worker", help=argparse.SUPPRESS)
     p.add_argument("path")
@@ -58,8 +59,18 @@ def main(argv=None):
             sensor_class = RPiGPIOHCSR04 if cfg["sensor_backend"] == "rpi_gpio" else HCSR04
             sensor = sensor_class(cfg["trigger_bcm"], cfg["echo_bcm"], cfg["echo_timeout_s"],
                                   settle=cfg["sensor_settle_s"], pulse=cfg["trigger_pulse_s"])
-        controller = Controller(sensor, camera, cfg)
+        integration = None
         try:
+            if args.command == "run" and args.spring:
+                if not cfg["mqtt_host"] or not cfg["spring_base_url"]:
+                    raise ValueError("--spring requires mqtt_host and spring_base_url")
+                from .mqtt import EventClient
+                from .spring import SpringIntegration
+                events = EventClient(cfg)
+                events.start()
+                integration = SpringIntegration(cfg, events)
+                logging.info("spring=REAL mqtt=REAL http=REAL sensor_camera_mode=%s", args.mode.upper())
+            controller = Controller(sensor, camera, cfg, integration=integration)
             while True:
                 try:
                     reading = sensor.read()
@@ -74,7 +85,11 @@ def main(argv=None):
                         break
                 time.sleep(cfg["interval_s"])
         finally:
-            sensor.close()
+            try:
+                if integration:
+                    integration.close()
+            finally:
+                sensor.close()
         return 1 if controller.failures else 0
     except KeyboardInterrupt:
         logging.info("shutdown requested")

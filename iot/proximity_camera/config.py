@@ -1,7 +1,12 @@
 import json
+import ipaddress
+from urllib.parse import urlsplit
 import math
 
 DEFAULTS = {
+    "mqtt_host": None, "mqtt_port": 1883, "spring_base_url": None,
+    "device_id": 1, "sensor_type": "MOTION", "connection_timeout_s": 10,
+    "event_timeout_s": 10, "http_timeout_s": 10,
     "sensor_backend": "rpi_gpio", "trigger_bcm": 20, "echo_bcm": 16, "near_cm": 50, "far_cm": 70,
     "consecutive": 3, "cooldown_s": 5, "interval_s": 0.5, "sensor_settle_s": 0.2, "trigger_pulse_s": 0.01,
     "echo_timeout_s": 0.1, "output_dir": "captures", "max_files": 100,
@@ -46,4 +51,33 @@ def load_config(path=None):
             continue
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 2 <= value <= 400:
             raise ValueError("invalid mock reading")
+    for key in ("connection_timeout_s", "event_timeout_s", "http_timeout_s"):
+        value = config[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value <= 120:
+            raise ValueError("invalid " + key)
+    for key, maximum in (("device_id", 2**63 - 1), ("mqtt_port", 65535)):
+        value = config[key]
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= maximum:
+            raise ValueError("invalid " + key)
+    if not isinstance(config["sensor_type"], str) or not config["sensor_type"].strip() or len(config["sensor_type"]) > 64:
+        raise ValueError("invalid sensor_type")
+    if config["mqtt_host"] is not None:
+        try:
+            if not isinstance(config["mqtt_host"], str):
+                raise ValueError()
+            ipaddress.ip_address(config["mqtt_host"])
+        except (ValueError, TypeError):
+            raise ValueError("mqtt_host must be a numeric IP address")
+    if config["spring_base_url"] is not None:
+        try:
+            if not isinstance(config["spring_base_url"], str):
+                raise ValueError()
+            url = urlsplit(config["spring_base_url"])
+            if url.scheme not in ("http", "https") or not url.hostname or url.username is not None or url.password is not None or url.path not in ("", "/") or url.query or url.fragment:
+                raise ValueError()
+            ipaddress.ip_address(url.hostname)
+            if url.port is not None and not 0 < url.port <= 65535:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise ValueError("spring_base_url must be an HTTP(S) origin with numeric IP")
     return config
