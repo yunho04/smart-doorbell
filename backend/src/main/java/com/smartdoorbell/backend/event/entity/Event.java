@@ -24,6 +24,9 @@ public class Event {
     @Column(name = "started_at", nullable = false)
     private LocalDateTime startedAt;
 
+    @Column(name = "last_detected_at")
+    private LocalDateTime lastDetectedAt;
+
     @Column(name = "ended_at")
     private LocalDateTime endedAt;
 
@@ -59,6 +62,10 @@ public class Event {
 
         if (startedAt == null) {
             startedAt = now;
+        }
+
+        if (lastDetectedAt == null) {
+            lastDetectedAt = now;
         }
 
         if (createdAt == null) {
@@ -137,4 +144,12 @@ public class Event {
     public void setStatus(String status) {
         this.status = status;
     }
+    public void updateLastDetectedAt() {
+        this.lastDetectedAt = LocalDateTime.now();
+    }
+
+    public LocalDateTime getLastDetectedAt() {
+        return lastDetectedAt;
+    }
 }
+

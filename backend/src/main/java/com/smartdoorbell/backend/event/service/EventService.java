@@ -6,6 +6,8 @@ import com.smartdoorbell.backend.event.entity.Event;
 import com.smartdoorbell.backend.event.repository.EventRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.smartdoorbell.backend.eventresponse.entity.EventResponseHistory;
+import com.smartdoorbell.backend.eventresponse.repository.EventResponseHistoryRepository;
 
 @Service
 @Transactional
@@ -13,13 +15,16 @@ public class EventService {
 
     private final EventRepository eventRepository;
     private final DeviceRepository deviceRepository;
+    private final EventResponseHistoryRepository eventResponseHistoryRepository;
 
     public EventService(
             EventRepository eventRepository,
-            DeviceRepository deviceRepository
+            DeviceRepository deviceRepository,
+            EventResponseHistoryRepository eventResponseHistoryRepository
     ) {
         this.eventRepository = eventRepository;
         this.deviceRepository = deviceRepository;
+        this.eventResponseHistoryRepository = eventResponseHistoryRepository;
     }
 
     // 1. 새로운 Event 생성
@@ -67,5 +72,24 @@ public class EventService {
         );
 
         return event;
+    }
+    public EventResponseHistory saveResponse(
+            Long eventId,
+            String responseCode,
+            String responseText
+    ) {
+        Event event = eventRepository.findById(eventId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException("Event not found: " + eventId)
+                );
+
+        EventResponseHistory response =
+                new EventResponseHistory(
+                        event,
+                        responseCode,
+                        responseText
+                );
+
+        return eventResponseHistoryRepository.save(response);
     }
 }
