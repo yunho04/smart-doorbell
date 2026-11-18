@@ -5,6 +5,7 @@ import math
 
 DEFAULTS = {
     "mqtt_host": None, "mqtt_port": 1883, "spring_base_url": None,
+    "vision_base_url": None, "vision_timeout_s": 30,
     "mqtt_client_id": None, "presence_interval_s": 2, "presence_ack_timeout_s": 2, "session_status_timeout_s": 2,
     "device_id": 1, "sensor_type": "MOTION", "connection_timeout_s": 10,
     "event_timeout_s": 10, "http_timeout_s": 10,
@@ -52,7 +53,7 @@ def load_config(path=None):
             continue
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 2 <= value <= 400:
             raise ValueError("invalid mock reading")
-    for key in ("connection_timeout_s", "event_timeout_s", "http_timeout_s"):
+    for key in ("connection_timeout_s", "event_timeout_s", "http_timeout_s", "vision_timeout_s"):
         value = config[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value <= 120:
             raise ValueError("invalid " + key)
@@ -76,18 +77,19 @@ def load_config(path=None):
             ipaddress.ip_address(config["mqtt_host"])
         except (ValueError, TypeError):
             raise ValueError("mqtt_host must be a numeric IP address")
-    if config["spring_base_url"] is not None:
-        try:
-            if not isinstance(config["spring_base_url"], str):
-                raise ValueError()
-            url = urlsplit(config["spring_base_url"])
-            if url.scheme not in ("http", "https") or not url.hostname or url.username is not None or url.password is not None or url.path not in ("", "/") or url.query or url.fragment:
-                raise ValueError()
-            ipaddress.ip_address(url.hostname)
-            if url.port is not None and not 0 < url.port <= 65535:
-                raise ValueError()
-        except (ValueError, TypeError):
-            raise ValueError("spring_base_url must be an HTTP(S) origin with numeric IP")
+    for key in ("spring_base_url", "vision_base_url"):
+        if config[key] is not None:
+            try:
+                if not isinstance(config[key], str):
+                    raise ValueError()
+                url = urlsplit(config[key])
+                if url.scheme not in ("http", "https") or not url.hostname or url.username is not None or url.password is not None or url.path not in ("", "/") or url.query or url.fragment:
+                    raise ValueError()
+                ipaddress.ip_address(url.hostname)
+                if url.port is not None and not 0 < url.port <= 65535:
+                    raise ValueError()
+            except (ValueError, TypeError):
+                raise ValueError(key + " must be an HTTP(S) origin with numeric IP")
     return config
 
 

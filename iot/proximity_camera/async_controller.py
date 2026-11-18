@@ -6,6 +6,7 @@ import time
 import uuid
 
 from .spring import get_event_status
+from .vision import analyze_image
 
 
 class AsyncSpringController:
@@ -43,6 +44,16 @@ class AsyncSpringController:
             stage = 'upload'
             self.integration.upload(event_id, path, request_id, finish=False)
             logging.info('upload request_id=%s event_id=%s result=success', request_id, event_id)
+            if self.config['vision_base_url']:
+                if self.stopping.is_set():
+                    return
+                stage = 'vision'
+                self.integration.events.check()
+                if self.stopping.is_set():
+                    return
+                analyze_image(self.config, event_id, path)
+                self.integration.events.check()
+                logging.info('vision request_id=%s event_id=%s result=success', request_id, event_id)
         except BaseException as exc:
             self.job_error = exc
             logging.error('%s request_id=%s event_id=%s result=failed reason=%s', stage, request_id, event_id, exc)
@@ -119,6 +130,8 @@ class AsyncSpringController:
             # Each network operation and the camera child have bounded deadlines.
             timeout = (self.config['presence_ack_timeout_s'] + self.config['event_timeout_s'] +
                        self.config['camera_timeout_s'] + self.config['http_timeout_s'] + 10)
+            if self.config['vision_base_url']:
+                timeout += self.config['vision_timeout_s']
             self.job.join(timeout)
             if self.job.is_alive():
                 self.integration.abort()
