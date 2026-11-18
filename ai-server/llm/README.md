@@ -59,7 +59,7 @@ Vision·STT 결과는 Spring을 거치지 않고 AI 서버가 eventId별로 보�
 | API | 시점 | 본문 |
 |---|---|---|
 | `POST {SPRING}/api/v1/events/{id}/response` | 음성마다 대사 선택 직후 | `{"responseCode":"DELIVERY_01","responseText":"..."}` |
-| `POST {SPRING}/api/v1/events/{id}/result` | finalize 후 분석 완료 시 | `{"riskLevel":"LOW","summary":"..."}` |
+| `POST {SPRING}/api/v1/events/{id}/result` | finalize 후 분석 완료 시 | `{"riskLevel":"LOW","summary":"...","responseCode":"DELIVERY_01","responseText":"..."}` (뒤 두 개는 마지막 재생 대사, 없으면 null. Spring `EventResultRequest`와 동일) |
 
 실패하면 1회만 재시도하고, AI 서버 처리는 계속 진행한다 (무한 재시도 없음).
 

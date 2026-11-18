@@ -116,7 +116,8 @@ def test_full_flow_delivery_low(spring):
     result = calls_to(spring, "/api/v1/events/20/result")
     assert len(result) == 1
     payload = result[0]["json"]
-    assert set(payload) == {"riskLevel", "summary"}          # 명세서 형식 그대로
+    assert {"riskLevel", "summary"} <= set(payload)            # 명세서 필수 필드
+    assert payload["responseCode"] == "DELIVERY_01"           # Spring DTO가 받는 선택 필드
     assert payload["riskLevel"] == "LOW"
     assert "택배" in payload["summary"]
 

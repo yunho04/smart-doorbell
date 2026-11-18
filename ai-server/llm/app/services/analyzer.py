@@ -88,6 +88,7 @@ def analyze(event_id: int) -> tuple[SpringResultRequest, dict]:
         reason = f"Vision: {', '.join(reasons_v)} / LLM: {reason}"
 
     summary = llm.summarize(features, transcripts, final_level, reasons_v)
+    last = data.voices[-1] if data.voices else None
     detail = {
         "reason": reason,
         "vision_level": features.vision_risk_level.value if features.vision_risk_level else None,
@@ -95,7 +96,9 @@ def analyze(event_id: int) -> tuple[SpringResultRequest, dict]:
         "referenced_case_ids": [c["case_id"] for c in examples],
         "best_frame_no": select_best_frame(data),
     }
-    return SpringResultRequest(risk_level=final_level, summary=summary), detail
+    return SpringResultRequest(risk_level=final_level, summary=summary,
+                               response_code=last.response_code if last else None,
+                               response_text=last.response_text if last else None), detail
 
 
 def finalize_event(event_id: int) -> bool:

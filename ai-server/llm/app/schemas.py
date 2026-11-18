@@ -57,9 +57,16 @@ class SpringResponseRequest(CamelModel):
 
 
 class SpringResultRequest(CamelModel):
-    """LLM -> Spring : POST /api/v1/events/{eventId}/result"""
+    """LLM -> Spring : POST /api/v1/events/{eventId}/result
+
+    명세서 필수: riskLevel, summary
+    Spring 실제 DTO(EventResultRequest)는 responseCode, responseText도 받아 events 행에 저장한다.
+    -> 마지막으로 재생한 대사를 함께 보낸다 (응대가 없었으면 null).
+    """
     risk_level: RiskLevel
     summary: str
+    response_code: str | None = None
+    response_text: str | None = None
 
 
 # =====================================================================
