@@ -5,7 +5,7 @@ import math
 
 DEFAULTS = {
     "mqtt_host": None, "mqtt_port": 1883, "spring_base_url": None,
-    "vision_base_url": None, "vision_timeout_s": 30,
+    "vision_base_url": None, "vision_timeout_s": 30, "vision_interval_s": 1,
     "mqtt_client_id": None, "presence_interval_s": 2, "presence_ack_timeout_s": 2, "session_status_timeout_s": 2,
     "device_id": 1, "sensor_type": "MOTION", "connection_timeout_s": 10,
     "event_timeout_s": 10, "http_timeout_s": 10,
@@ -53,7 +53,7 @@ def load_config(path=None):
             continue
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 2 <= value <= 400:
             raise ValueError("invalid mock reading")
-    for key in ("connection_timeout_s", "event_timeout_s", "http_timeout_s", "vision_timeout_s"):
+    for key in ("connection_timeout_s", "event_timeout_s", "http_timeout_s", "vision_timeout_s", "vision_interval_s"):
         value = config[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value <= 120:
             raise ValueError("invalid " + key)

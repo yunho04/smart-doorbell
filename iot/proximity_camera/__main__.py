@@ -76,7 +76,7 @@ def main(argv=None):
                 logging.info("spring=REAL mqtt=REAL http=REAL sensor_camera_mode=%s", args.mode.upper())
             if integration:
                 from .async_controller import AsyncSpringController
-                controller = AsyncSpringController(sensor, camera, cfg, integration)
+                controller = AsyncSpringController(sensor, camera, cfg, integration, max_attempts=args.max_captures)
             else:
                 controller = Controller(sensor, camera, cfg)
             while True:
@@ -90,7 +90,7 @@ def main(argv=None):
                 else:
                     controller.step(reading)
                     if (args.max_captures and controller.attempts >= args.max_captures and
-                            (not integration or not controller.busy())):
+                            (not integration or controller.initial_done())):
                         break
                 time.sleep(cfg["interval_s"])
         except BaseException:

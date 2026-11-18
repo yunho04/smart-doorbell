@@ -203,6 +203,9 @@ class AsyncTests(unittest.TestCase):
         self.uploads = []
         outer = self
         class Camera:
+            def session(self, stopping):
+                from contextlib import nullcontext
+                return nullcontext(self)
             def capture(self, request_id):
                 outer.capturing.set()
                 if not outer.release.wait(2): raise RuntimeError('test camera timeout')
@@ -345,9 +348,9 @@ class MaxCapturesCLITests(unittest.TestCase):
             def read(self): reads.append(1); return Reading(40, 0, None)
             def close(self): pass
         class Controller:
-            def __init__(self, *args): self.attempts = 0; self.failures = 0
+            def __init__(self, *args, **kwargs): self.attempts = 0; self.failures = 0
             def step(self, reading): self.attempts = 1
-            def busy(self): return len(reads) < 3
+            def initial_done(self): return len(reads) >= 3
             def close(self): pass
             def cancel(self): pass
         cfg = dict(DEFAULTS, mqtt_host='127.0.0.1', spring_base_url='http://127.0.0.1:8080')

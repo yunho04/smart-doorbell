@@ -8,5 +8,6 @@
   "mqtt_client_id": "doorbell-sensor-camera-1",
   "sensor_backend": "rpi_gpio",
   "trigger_bcm": 20,
-  "echo_bcm": 16
+  "echo_bcm": 16,
+  "vision_interval_s": 1
 }

@@ -1,5 +1,7 @@
 import os
 import logging
+import multiprocessing
+import threading
 import shutil
 import struct
 import subprocess
@@ -10,13 +12,59 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 
 
-def _png():
+def _png(identity=None):
     def chunk(kind, data):
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
     return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 128, 72, 8, 2, 0, 0, 0)) +
-            chunk(b"tEXt", b"Description\x00MOCK image - not a camera capture") +
+            chunk(b"tEXt", b"Description\x00MOCK image - not a camera capture" + (str(identity).encode() if identity else b"")) +
             chunk(b"IDAT", zlib.compress((b"\x00" + b"\x66\x99\xcc" * 128) * 72)) + chunk(b"IEND", b""))
 
+
+def _prepare(camera, settle, af_timeout, width, height, controls, clock, started):
+    camera.configure(camera.create_still_configuration(
+        main={"size": (width, height)}, buffer_count=3, queue=False,
+        controls={"AfMode": controls.AfModeEnum.Manual,
+                  "FrameDurationLimits": (33333, 100000)}))
+    camera.start(show_preview=False)
+    started[0] = True
+    time.sleep(settle)
+    camera.set_controls({"AfMode": controls.AfModeEnum.Auto,
+                         "AfTrigger": controls.AfTriggerEnum.Start})
+    start = clock()
+    deadline = start + af_timeout
+    last_state = None
+    logging.info("camera autofocus started timeout_s=%s", af_timeout)
+    try:
+        while True:
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise TimeoutError("autofocus deadline elapsed")
+            metadata = camera.wait(camera.capture_metadata(wait=False), timeout=remaining)
+            state = metadata.get("AfState")
+            elapsed = clock() - start
+            if state != last_state:
+                logging.info("camera autofocus state=%s lens_position=%s elapsed_s=%.2f",
+                             state, metadata.get("LensPosition"), elapsed)
+                last_state = state
+            if elapsed >= af_timeout:
+                raise TimeoutError("autofocus deadline elapsed")
+            if state == controls.AfStateEnum.Focused:
+                break
+            if state == controls.AfStateEnum.Failed:
+                raise RuntimeError("autofocus failed")
+            if state not in (controls.AfStateEnum.Idle, controls.AfStateEnum.Scanning):
+                raise RuntimeError("unsupported autofocus metadata: AfState=%r" % (state,))
+    except (TimeoutError, FutureTimeoutError) as exc:
+        _flush_timed_out_job(camera)
+        raise RuntimeError("autofocus timed out after %s seconds (last AfState=%s)" % (af_timeout, last_state)) from exc
+
+
+def _capture(camera, path, capture_timeout):
+    try:
+        camera.wait(camera.capture_file(str(path), wait=False), timeout=capture_timeout)
+    except (TimeoutError, FutureTimeoutError) as exc:
+        _flush_timed_out_job(camera)
+        raise RuntimeError("capture timed out after %s seconds" % capture_timeout) from exc
 
 def worker(path, settle, af_timeout, capture_timeout, width, height, camera_class=None, controls=None, clock=None):
     if camera_class is None:
@@ -24,59 +72,46 @@ def worker(path, settle, af_timeout, capture_timeout, width, height, camera_clas
         camera_class = Picamera2
     if controls is None:
         from libcamera import controls
-    if clock is None:
-        clock = time.monotonic
     camera = camera_class()
-    started = False
+    started = [False]
     try:
-        camera.configure(camera.create_still_configuration(
-            main={"size": (width, height)}, buffer_count=3, queue=False,
-            controls={"AfMode": controls.AfModeEnum.Manual,
-                      "FrameDurationLimits": (33333, 100000)}))
-        camera.start(show_preview=False)
-        started = True
-        time.sleep(settle)
-        camera.set_controls({"AfMode": controls.AfModeEnum.Auto,
-                             "AfTrigger": controls.AfTriggerEnum.Start})
-        start = clock()
-        deadline = start + af_timeout
-        last_state = None
-        logging.info("camera autofocus started timeout_s=%s", af_timeout)
-        try:
-            while True:
-                remaining = deadline - clock()
-                if remaining <= 0:
-                    raise TimeoutError("autofocus deadline elapsed")
-                metadata = camera.wait(camera.capture_metadata(wait=False), timeout=remaining)
-                state = metadata.get("AfState")
-                elapsed = clock() - start
-                if state != last_state:
-                    logging.info("camera autofocus state=%s lens_position=%s elapsed_s=%.2f",
-                                 state, metadata.get("LensPosition"), elapsed)
-                    last_state = state
-                if elapsed >= af_timeout:
-                    raise TimeoutError("autofocus deadline elapsed")
-                if state == controls.AfStateEnum.Focused:
-                    break
-                if state == controls.AfStateEnum.Failed:
-                    raise RuntimeError("autofocus failed")
-                if state not in (controls.AfStateEnum.Idle, controls.AfStateEnum.Scanning):
-                    raise RuntimeError("unsupported autofocus metadata: AfState=%r" % (state,))
-        except (TimeoutError, FutureTimeoutError) as exc:
-            _flush_timed_out_job(camera)
-            raise RuntimeError("autofocus timed out after %s seconds (last AfState=%s)" % (af_timeout, last_state)) from exc
-        try:
-            camera.wait(camera.capture_file(str(path), wait=False), timeout=capture_timeout)
-        except (TimeoutError, FutureTimeoutError) as exc:
-            _flush_timed_out_job(camera)
-            raise RuntimeError("capture timed out after %s seconds" % capture_timeout) from exc
+        _prepare(camera, settle, af_timeout, width, height, controls, clock or time.monotonic, started)
+        _capture(camera, path, capture_timeout)
     finally:
         try:
-            if started:
+            if started[0]:
                 camera.stop()
         finally:
             camera.close()
 
+def _session_worker(pipe, cfg):
+    camera = None
+    started = [False]
+    try:
+        from picamera2 import Picamera2
+        from libcamera import controls
+        camera = Picamera2()
+        _prepare(camera, cfg['settle_s'], cfg['camera_af_timeout_s'], cfg['camera_width'], cfg['camera_height'], controls, time.monotonic, started)
+        pipe.send(('ready', None))
+        while True:
+            path = pipe.recv()
+            if path is None:
+                break
+            _capture(camera, path, cfg['camera_capture_timeout_s'])
+            pipe.send(('captured', None))
+    except BaseException as exc:
+        try:
+            pipe.send(('error', str(exc)))
+        except (BrokenPipeError, EOFError, OSError):
+            pass
+    finally:
+        if camera is not None:
+            try:
+                if started[0]:
+                    camera.stop()
+            finally:
+                camera.close()
+        pipe.close()
 
 def _flush_timed_out_job(camera):
     # After a timeout the job state is uncertain; flush only for cleanup.
@@ -102,7 +137,10 @@ class Camera:
     def __init__(self, config, mode, popen=subprocess.Popen):
         self.config, self.mode, self.popen = config, mode, popen
 
-    def capture(self, request_id):
+    def session(self, stopping=None):
+        return CameraSession(self, stopping)
+
+    def capture(self, request_id, session=None):
         cfg = self.config
         directory = Path(cfg["output_dir"])
         directory.mkdir(parents=True, exist_ok=True)
@@ -120,7 +158,9 @@ class Camera:
         proc = None
         try:
             if self.mode == "mock":
-                temporary.write_bytes(_png())
+                temporary.write_bytes(_png(request_id if session else None))
+            elif session is not None:
+                session._capture(temporary)
             else:
                 command = [sys.executable, "-m", "proximity_camera", "_worker", str(temporary), str(cfg["settle_s"]), str(cfg["camera_af_timeout_s"]), str(cfg["camera_capture_timeout_s"]), str(cfg["camera_width"]), str(cfg["camera_height"])]
                 proc = self.popen(command)
@@ -145,3 +185,98 @@ class Camera:
 
 def worker_signal(signum, frame):
     raise SystemExit("worker interrupted by signal %s" % signum)
+
+
+class CameraSessionCancelled(Exception):
+    """A requested shutdown interrupted camera startup or capture."""
+
+
+class CameraSession:
+    def __init__(self, camera, stopping=None):
+        self.camera = camera
+        self.stopping = stopping or threading.Event()
+        self.process = self.pipe = None
+        self.started = False
+
+    def __enter__(self):
+        if self.camera.mode != 'mock':
+            ctx = multiprocessing.get_context('spawn')
+            self.pipe, child = ctx.Pipe()
+            self.process = ctx.Process(target=_session_worker, args=(child, self.camera.config))
+            try:
+                self.process.start()
+                self.started = True
+                child.close()
+                self._receive('ready', self.camera.config['camera_timeout_s'])
+            except BaseException:
+                child.close()
+                self.close()
+                raise
+        return self
+
+    def _receive(self, expected, timeout):
+        deadline = time.monotonic() + timeout
+        while True:
+            if self.stopping.is_set():
+                raise CameraSessionCancelled('camera session cancelled')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError('camera session timed out')
+            if self.pipe.poll(min(.1, remaining)):
+                try:
+                    result, detail = self.pipe.recv()
+                except EOFError as exc:
+                    raise RuntimeError('camera session exited') from exc
+                if result != expected:
+                    raise RuntimeError('camera session failed: %s' % detail)
+                return
+            if not self.process.is_alive():
+                raise RuntimeError('camera session exited')
+
+    def _capture(self, path):
+        try:
+            self.pipe.send(str(path))
+            self._receive('captured', self.camera.config['camera_capture_timeout_s'] + 1)
+        except BaseException:
+            # Stop the child before Camera.capture removes the partial file.
+            self.close()
+            raise
+
+    def capture(self, request_id):
+        return self.camera.capture(request_id, self)
+
+    def close(self):
+        process, pipe = self.process, self.pipe
+        self.process = self.pipe = None
+        try:
+            if process is not None:
+                try:
+                    if self.started:
+                        forced = False
+                        if process.is_alive():
+                            try:
+                                pipe.send(None)
+                            except (BrokenPipeError, EOFError, OSError):
+                                pass
+                            process.join(2)
+                        if process.is_alive():
+                            forced = True
+                            process.terminate()
+                            process.join(2)
+                        if process.is_alive():
+                            process.kill()
+                            process.join(2)
+                        if process.is_alive():
+                            raise RuntimeError('camera process did not stop')
+                        if process.exitcode != 0 and not forced:
+                            raise RuntimeError('camera process exited with code %s' % process.exitcode)
+                finally:
+                    if not self.started or not process.is_alive():
+                        process.close()
+        finally:
+            if pipe is not None:
+                pipe.close()
+            self.started = False
+
+    def __exit__(self, *args):
+        self.close()
