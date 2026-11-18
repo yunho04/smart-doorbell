@@ -2,8 +2,6 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-import cv2
-import numpy as np
 import ultralytics
 from fastapi.testclient import TestClient
 
@@ -52,14 +50,13 @@ def test_representative_upload():
     m.requests.post = lambda url, files, timeout: calls.append((url, files)) or SimpleNamespace(
         ok=True, status_code=201, text="", json=lambda: {"mediaId": 1, "eventId": 303})
     m.SPRING_URL = "http://spring.test"
-    blank = cv2.imencode(".jpg", np.zeros((480, 640, 3), np.uint8))[1].tobytes()
     try:
-        post(303, blank), post(303), post(303, blank)  # 빈 사진 / 사람 4명 / 빈 사진 -> 2번이 대표
-        r = client.post("/vision/events/303/representative")
+        post(303), post(303)
+        r = client.post("/vision/events/303/representative", json={"frame_no": 2})
         assert r.status_code == 200 and r.json()["mediaId"] == 1 and r.json()["frame_no"] == 2
         assert calls[0][0] == "http://spring.test/api/v1/events/303/image"
         assert calls[0][1]["file"][1] == BUS.read_bytes()  # 키 file, 그 사진 원본 그대로
-        assert client.post("/vision/events/404/representative").status_code == 404
+        assert client.post("/vision/events/303/representative", json={"frame_no": 99}).status_code == 404
     finally:
         m.requests.post, m.SPRING_URL = real, None
 

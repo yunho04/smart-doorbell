@@ -109,7 +109,7 @@ curl -F event_id=101 -F image=@visitor.jpg http://localhost:8000/vision/analyze
 
 | 필드 | 범위 | 설명 |
 |---|---|---|
-| `frame_no` | Event | 이 Event에서 몇 번째 사진인지 (11-17 톡방 frameId) |
+| `frame_no` | Event | 이 Event에서 몇 번째 사진인지. LLM이 대표 사진 고를 때 이 번호를 쓴다 (11-17 톡방 frameId) |
 | `captured_at` | 이번 사진 | Vision이 사진을 받은 시각 (STT와 시간 순서 맞추기용) |
 | `person_detected`, `person_count`, `objects`, `processing_ms` | 이번 사진 | ERD `VISION_RESULTS` 컬럼 이름 그대로. `bbox`는 `[x1, y1, x2, y2]` 픽셀 |
 | `person_visible_sec` | Event | 사람이 처음 보인 때부터 마지막으로 보인 때까지 초 |
@@ -123,15 +123,16 @@ LLM 서버가 죽어 있어도 Vision은 계속 돌고, 실패는 로그에 남�
 
 ### 대표 사진 올리기 `POST /vision/events/{event_id}/representative`
 
-AI 서버가 finalize를 받은 뒤 본문 없이 호출한다. **대표 사진은 Vision이 고른다** (11-18 장준용 결정. 11-17 톡방안은 LLM이 고르는 것이었음).
-Vision이 그 사진 원본을 Spring `POST /api/v1/events/{id}/image`(multipart 키 `file`)로 올린다 (11-18 체크리스트 15단계).
+**대표 사진은 LLM(허인혜)이 고른다** (11-17 톡방, 11-18 확인). LLM이 finalize 뒤 고른 사진 번호를 보내면, Vision이 그 사진 원본을 Spring `POST /api/v1/events/{id}/image`(multipart 키 `file`)로 올린다 (11-18 체크리스트 15단계).
 
-고르는 기준 (사진마다 점수, 가장 높은 1장만 메모리에 둠): 흉기 수 > 얼굴 가림 수 > 택배 상자 > 사람이 가장 크게(가깝게) 보인 사진. 같으면 먼저 온 사진.
+```json
+{"frame_no": 12}
+```
 
 | 코드 | 이유 |
 |---|---|
-| 200 | 업로드 성공. 본문 = Spring 응답 `{mediaId, eventId, mediaType, filePath}` + 고른 `frame_no` |
-| 404 | 그 Event로 받은 사진이 없음 (사진이 10분 안 오면 Event 삭제) |
+| 200 | 업로드 성공. 본문 = Spring 응답 `{mediaId, eventId, mediaType, filePath}` + `frame_no` |
+| 404 | 그 Event·번호의 사진이 없음 (Event당 최근 300장만 메모리에 둠, 사진이 10분 안 오면 Event 삭제) |
 | 502 | Spring 연결 실패 또는 Spring 에러 |
 | 503 | `SPRING_URL` 설정 안 됨 |
 
