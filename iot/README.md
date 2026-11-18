@@ -66,6 +66,10 @@ rpicam-still -n --autofocus-on-capture -o test.jpg
 
 설치 명령은 Raspberry Pi OS 기준 예시이며, 패키지 오류 발생 시 실제 OS의 저장소와 지원 여부를 확인해야 한다. 카메라 단독 시험의 확인 항목은 저장된 사진의 초점과 방향이다. 현재 장치의 Python은 3.13.5이며, 새 모듈의 카메라·GPIO 패키지 호환성 검증은 남아 있다.
 
+앱의 하드웨어 촬영은 매 촬영마다 자동초점을 시작하고 `AfState` 메타데이터가 `Focused`가 될 때만 사진을 저장한다. `Scanning`을 관찰하지 못해도 `Focused`면 진행하며, 실패·시간 초과·메타데이터 누락 시 촬영을 중단한다. 로그에서 상태 변화, 렌즈 위치, 경과 시간과 오류 단계를 확인한다. 프레임 길이는 33,333~100,000µs(약 10~30fps)로 제한하므로 최대 노출이 100ms여서 어두운 환경에서 사진이 어두워질 수 있다.
+
+자동초점 오류를 재확인할 때는 카메라 단독 명령으로 충분히 밝은 곳에서 무늬가 있는 피사체를 카메라 앞 약 30~50cm에 두고 시험한다. 초음파 센서 거리와 카메라 피사체 거리가 같다고 가정하지 않는다. 문제가 계속되면 위 `rpicam-still` 단독 결과와 앱의 autofocus 상태 로그를 함께 확인한다. 이 변경의 실제 Pi 촬영 결과는 아직 검증되지 않았다.
+
 `python3-rpi.gpio`는 [Debian trixie 패키지](https://packages.debian.org/trixie/python3-rpi.gpio)로 제공된다. 이미 `RPi.GPIO`가 동작하는 환경에서는 기존 설치를 유지한다. 원본 RPi.GPIO와 `rpi-lgpio` 호환 래퍼는 같은 모듈 이름을 사용하므로 동시에 설치하지 않는다([설치 문서](https://rpi-lgpio.readthedocs.io/en/latest/install.html)). 기존 패키지는 임의로 제거하지 않는다.
 
 3. **센서 배선.** 아래 회로는 실물 검증 전의 설계 예시다. 배선 작업은 센서와 저항의 표기·값을 확인한 뒤 전원이 꺼진 상태에서 수행한다. BCM 번호와 물리 핀 번호는 구분해 표기했다. 일반 HC-SR04의 ECHO는 5V이므로 GPIO 입력에는 분압 또는 레벨 변환이 필요하다([GPIO Zero 공식 배선](https://gpiozero.readthedocs.io/en/stable/api_input.html#distancesensor-hc-sr04)).
@@ -208,7 +212,7 @@ source .venv/bin/activate
 
 통합 시험은 카메라와 센서의 단독 동작을 확인한 뒤 수행한다. 기본 촬영 조건은 50cm 이하의 거리값이 연속 3회 측정되는 경우다. 촬영 시도 후에는 70cm 이상 연속 3회와 5초 쿨다운을 모두 충족해야 다시 감지 가능한 상태로 전환된다. 중간값과 오류는 연속 횟수를 초기화하며 오류만으로 재감지를 허용하지 않는다. 촬영에 실패해도 접근 상태가 유지되는 동안에는 재시도하지 않는다.
 
-촬영은 동기 방식이므로 촬영 중 거리 측정은 일시 중지된다. GPIO, 거리 임계값, 시간 설정은 설치 위치와 측정 대상에 따른 조정 항목이다. 프로그램 종료는 Ctrl+C로 처리한다.
+로컬 모드의 촬영은 동기 방식이므로 촬영 중 거리 측정은 일시 중지된다. Spring 모드는 촬영 중에도 센서를 읽는다. GPIO, 거리 임계값, 시간 설정은 설치 위치와 측정 대상에 따른 조정 항목이다. 프로그램 종료는 Ctrl+C로 처리한다.
 
 사진의 기본 저장 경로는 `captures/`다. 보관 한도는 파일 100개, 전체 100MiB, 촬영 파일당 10MiB이며 최소 여유 공간은 100MiB다. 한도에 도달하면 새 촬영을 거절하고 기존 파일은 유지한다. 실패한 임시 파일은 작업자 종료 후 삭제하며, 저장 공간 확보를 위한 기존 사진 정리는 사진 확인 후 수동으로 수행한다. `request_id`는 로컬 촬영 시도의 식별자로 서버 Event ID와는 별개다.
 
@@ -221,7 +225,7 @@ source .venv/bin/activate
 
 기준 문서는 `smart-doorbell_mvp-v1_spring-api-spec.pdf`, 「AIoT 스마트 도어벨 MVP v1 Spring 연동 API 명세서」 v1.0, 2026-11-16이다. 이 절의 코드는 명세를 따르는 클라이언트 구현이며 실제 브로커·Spring 서버와의 통합 검증은 아직 완료되지 않았다.
 
-MQTT 3.1.1에서 `doorbell/{deviceId}/event`를 QoS 1로 구독한 뒤 `doorbell/{deviceId}/sensor`에 `deviceId`, `sensorType`, `value`를 QoS 1, retain 비활성으로 전송한다. 기본 `MOTION`은 명세의 감지 구분값이며 HC-SR04가 사람을 분류한다는 뜻은 아니다. `CREATED`와 유효한 `eventId`를 수신하면 사진 한 장을 촬영하고 `POST /api/v1/events/{eventId}/image`의 `file` 필드에 JPEG 또는 PNG로 전송한다. 성공은 201 응답의 `mediaId`, `eventId`, `mediaType`, `filePath`를 검증한다. 전송 성공 여부와 관계없이 촬영 사진은 로컬에 보관한다.
+MQTT 3.1.1에서 `doorbell/{deviceId}/event`를 QoS 1로 구독한 뒤 `doorbell/{deviceId}/sensor`에 `deviceId`, `sensorType`, `value`, `presenceDetected`를 QoS 1, retain 비활성으로 전송한다. 기본 `MOTION`은 명세의 감지 구분값이며 HC-SR04가 사람을 분류한다는 뜻은 아니다. `CREATED`와 유효한 `eventId`를 수신하면 사진 한 장을 촬영하고 `POST /api/v1/events/{eventId}/image`의 `file` 필드에 JPEG 또는 PNG로 전송한다. 성공은 201 응답의 `mediaId`, `eventId`, `mediaType`, `filePath`를 검증한다. 전송 성공 여부와 관계없이 촬영 사진은 로컬에 보관한다.
 
 설정 예시의 `192.0.2.x`는 문서용 자리표시자다. 실제 주소를 개인 설정에 입력해야 한다. 이 클라이언트는 DNS 지연을 피하기 위해 MQTT 호스트와 HTTP(S) URL에 숫자 IP만 허용한다. 이는 PDF의 요구사항이 아니라 클라이언트의 제약이다. HTTPS는 기본 인증서 검증을 사용하며 해당 IP에 유효한 인증서가 필요하다. 예시의 HTTP와 MQTT 1883 평문은 격리된 개발망의 시연용이다.
 
@@ -239,3 +243,37 @@ python3 -m proximity_camera run --mode hardware --spring --config config.local.j
 `--spring`을 생략하면 기존 로컬 모드이며 추가 pip 패키지나 네트워크가 필요 없다. `--mode mock --spring`은 모의 센서와 모의 PNG를 사용하지만 MQTT와 HTTP는 **실제 서버**에 요청한다. 기존 개인 설정이 있다면 덮어쓰지 말고 필요한 Spring 항목을 추가한다. `connection_timeout_s`, `event_timeout_s`, `http_timeout_s`는 양의 유한 초 단위이며 최대 120초다. HTTP 제한은 소켓 I/O 작업별 제한으로 전체 요청의 총 경과 시간 상한은 아니다. 자동 HTTP 재시도와 MQTT 재연결·재발행은 하지 않는다.
 
 PDF의 이벤트 응답에는 요청 식별자가 없어 사진과 Event ID의 완전한 상관관계를 보장할 수 없다. 같은 deviceId에는 생산자 하나만 운용해야 한다. 이 구현은 한 번에 하나의 이벤트를 처리하고, 시간 초과·연결 단절·불확실한 발행·서로 다른 미확인 Event ID 등 모호한 상태가 발생하면 해당 실행에서 이후 요청을 차단한다. 재시작만으로 늦은 응답이나 서버 중복 생성 문제가 해결된다는 보장은 없다. 완전한 상관관계와 QoS 1 중복 방지를 위해서는 서버와 `request_id` 반환 및 중복 처리 규격을 합의해야 한다. 업로드 결과가 불확실해도 사진은 유지되며 운영자가 서버 상태를 확인해야 한다.
+
+## 현장 체크리스트: Pi A (2026-11-18)
+
+`config.school.json`은 오늘 전달받은 Spring `10.21.33.82:8080`, MQTT `10.21.33.82:1883`, 장치 1과 Pi A의 클라이언트 ID `doorbell-sensor-camera-1`을 사용한다. 주소는 네트워크가 바뀌면 다시 확인한다. Pi B의 ID `doorbell-audio-speaker-1`과 달라야 한다. 기존 `config.local.json`은 덮어쓰지 않는다. ECHO 직결 이력이 있으므로 전원을 끄고 분압 또는 레벨 변환을 설치한 뒤 실물 시험한다.
+
+7. Pi A와 서버가 같은 격리된 LAN에 있는지 확인하고, 카메라와 센서를 각각 단독 시험한 뒤 다음을 실행한다. 시작 로그에서 브로커 주소·클라이언트 ID·`doorbell/1/event` QoS 1 구독 완료를 확인한다.
+
+   ```bash
+   cd ~/smart-doorbell/iot
+   source .venv/bin/activate
+   pip install -e '.[spring]'
+   python3 -m proximity_camera camera --mode hardware --config config.school.json
+   python3 -m proximity_camera sensor --mode hardware --config config.school.json
+   python3 -m proximity_camera run --mode hardware --spring --config config.school.json
+   ```
+
+9. Pi B 구독도 준비한 후 센서 앞에 접근해 `doorbell/1/sensor`의 `presenceDetected: true`와 Spring의 새 이벤트 생성 여부를 확인한다. 기존에 진행 중인 `DETECTED` 이벤트가 있으면 서버가 새 ID를 발행하지 않으므로 시험 시작 전 서버 담당자와 상태를 확인한다. 자동 삭제하지 않는다. 수동 발행은 앱이 중지된 경우에만 사용한다. 앱 구동 중 외부 발행은 예상하지 못한 이벤트 ID를 만들어 앱이 안전을 위해 중지될 수 있다.
+10. 양쪽 Pi의 `eventId`와 DB의 event_id가 같은지 확인한다. Pi A는 한 방문에서 대표 사진 한 장을 촬영·업로드한다. `--max-captures 1`은 작업 완료 후 종료하므로 머무는 동안 신호를 유지해야 하는 전체 시험에는 사용하지 않는다.
+12. 감지 범위에서 벗어나면 true 발행을 중단한다. Spring은 마지막 true 이후 10초 경과를 기준으로 처리하지만 스케줄러와 AI 호출로 전환이 늦어질 수 있다. 실제 상태를 확인하며 기다린다.
+15. 해당 ID의 이미지 업로드 201 응답과 서버 DB의 사진 연결을 확인한다. AI 결과와 `COMPLETED`는 별도 구성요소의 실제 동작 확인이 필요하다. 체크리스트의 Vision 프레임 전송 주소·규격은 아직 제공되지 않아 이 앱에 구현하지 않았다.
+
+실행 중에는 유효한 근접 측정을 바탕으로 약 2초마다 true를 발행하며, 먼 거리나 측정 오류에서는 중단한다. 촬영·업로드 중에도 센서를 읽는다. 10초 이상 신호가 끊기면 촬영 작업이 끝난 뒤 서버의 해당 이벤트 상태를 조회한다. `DETECTED`라면 같은 방문을 유지하고, 그 외 상태라면 충분한 이탈 측정과 쿨다운 후 새 방문을 허용한다. 서버 상태 조회·발행 실패나 예상 밖 이벤트 ID는 중지하고 운영자가 서버 상태를 확인해야 한다. MQTT 응답에 요청 ID가 없어 서버와의 상태 조회·발행 사이 경쟁 및 중복 생성 방지를 완전히 보장하지 못한다.
+
+관찰만 할 때는 앱과 다른 클라이언트 ID를 사용한다.
+
+```bash
+mosquitto_sub -h 10.21.33.82 -p 1883 -i doorbell-observer-1 -q 1 -v -t 'doorbell/1/#'
+```
+
+앱을 중지한 수동 단독 시험에서만 다음을 사용한다. 실제 이벤트가 생성되므로 서버 담당자와 시험 상태를 맞춘다.
+
+```bash
+mosquitto_pub -h 10.21.33.82 -p 1883 -q 1 -t doorbell/1/sensor -m '{"deviceId":1,"sensorType":"MOTION","value":1,"presenceDetected":true}'
+```

@@ -5,6 +5,7 @@ import math
 
 DEFAULTS = {
     "mqtt_host": None, "mqtt_port": 1883, "spring_base_url": None,
+    "mqtt_client_id": None, "presence_interval_s": 2, "presence_ack_timeout_s": 2, "session_status_timeout_s": 2,
     "device_id": 1, "sensor_type": "MOTION", "connection_timeout_s": 10,
     "event_timeout_s": 10, "http_timeout_s": 10,
     "sensor_backend": "rpi_gpio", "trigger_bcm": 20, "echo_bcm": 16, "near_cm": 50, "far_cm": 70,
@@ -61,6 +62,13 @@ def load_config(path=None):
             raise ValueError("invalid " + key)
     if not isinstance(config["sensor_type"], str) or not config["sensor_type"].strip() or len(config["sensor_type"]) > 64:
         raise ValueError("invalid sensor_type")
+    client_id = config["mqtt_client_id"]
+    if client_id is not None and (not isinstance(client_id, str) or not client_id.strip() or len(client_id.encode("utf-8")) > 128 or any(ord(c) < 32 or ord(c) == 127 for c in client_id)):
+        raise ValueError("invalid mqtt_client_id")
+    for key in ("presence_interval_s", "presence_ack_timeout_s", "session_status_timeout_s"):
+        value = config[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value < 10:
+            raise ValueError("invalid " + key)
     if config["mqtt_host"] is not None:
         try:
             if not isinstance(config["mqtt_host"], str):
@@ -81,3 +89,11 @@ def load_config(path=None):
         except (ValueError, TypeError):
             raise ValueError("spring_base_url must be an HTTP(S) origin with numeric IP")
     return config
+
+
+def validate_spring_config(config):
+    if not config["mqtt_host"] or not config["spring_base_url"]:
+        raise ValueError("--spring requires mqtt_host and spring_base_url")
+    if (config["presence_interval_s"] + config["presence_ack_timeout_s"] + config["interval_s"] +
+            config["sensor_settle_s"] + 2 * config["echo_timeout_s"] + config["trigger_pulse_s"] >= 10):
+        raise ValueError("presence timing exceeds session window")

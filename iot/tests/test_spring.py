@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from proximity_camera.camera import Camera
-from proximity_camera.config import DEFAULTS, load_config
+from proximity_camera.config import DEFAULTS, load_config, validate_spring_config
 from proximity_camera.controller import Controller
 from proximity_camera.mqtt import EventClient
 from proximity_camera.sensor import Reading
@@ -50,7 +50,7 @@ class MQTTTests(unittest.TestCase):
     def test_subscription_then_publish_and_early_response(self):
         self.assertEqual(self.fake.subscription, ('doorbell/1/event', 1))
         self.assertEqual(self.events.create_event('req', 32), 15)
-        self.assertEqual(self.fake.published, [('doorbell/1/sensor', {'deviceId': 1, 'sensorType': 'MOTION', 'value': 1}, 1, False)])
+        self.assertEqual(self.fake.published, [('doorbell/1/sensor', {'deviceId': 1, 'sensorType': 'MOTION', 'value': 1, 'presenceDetected': True}, 1, False)])
         self.fake.message(15); self.events.check(); self.events.finish()
     def test_invalid_messages_ignored_then_timeout(self):
         self.fake.respond = None
@@ -189,3 +189,173 @@ class ConfigTests(unittest.TestCase):
             for cfg in [{'mqtt_host':True}, {'mqtt_host':123}, {'spring_base_url':[]}, {'spring_base_url':3}, {'mqtt_host':'broker.local'}, {'spring_base_url':'http://localhost:8080'}, {'spring_base_url':'http://user@127.0.0.1'}, {'device_id':True}, {'event_timeout_s':0}]:
                 file.write_text(json.dumps(cfg))
                 with self.assertRaises(ValueError): load_config(file)
+
+class AsyncTests(unittest.TestCase):
+    def setUp(self):
+        from proximity_camera.async_controller import AsyncSpringController
+        self.now = 0
+        self.cfg = dict(DEFAULTS, consecutive=1, cooldown_s=0)
+        self.fake = FakeClient()
+        self.events = EventClient(self.cfg, self.fake)
+        self.events.start()
+        self.release = threading.Event()
+        self.capturing = threading.Event()
+        self.uploads = []
+        outer = self
+        class Camera:
+            def capture(self, request_id):
+                outer.capturing.set()
+                if not outer.release.wait(2): raise RuntimeError('test camera timeout')
+                return 'photo.jpg'
+        class Integration:
+            events = self.events
+            def create_event(self, req, dist): return self.events.create_event(req, dist)
+            def upload(self, event_id, path, request_id, finish=True): outer.uploads.append(event_id)
+            def abort(self): self.events.abort()
+        self.lookups = []
+        self.status = 'DETECTED'
+        def lookup(cfg, event_id): self.lookups.append(event_id); return self.status
+        self.controller = AsyncSpringController(None, Camera(), self.cfg, Integration(), lambda: self.now, lookup)
+    def tearDown(self):
+        self.release.set()
+        if self.controller.job: self.controller.job.join(3)
+        self.events.close()
+    def step(self, now, value, error=None):
+        self.now = now
+        self.controller.step(Reading(value, 0, error))
+    def begin(self):
+        self.step(0, 40)
+        self.assertTrue(self.capturing.wait(1))
+    def test_heartbeats_during_camera_and_stop_on_far_invalid(self):
+        self.begin()
+        for t in (2, 4, 6, 8, 10, 12): self.step(t, 40)
+        self.assertEqual(len(self.fake.published), 7)
+        self.step(14, 80); self.step(16, None, 'no echo')
+        self.assertEqual(len(self.fake.published), 7)
+        self.release.set(); self.controller.job.join(1)
+        self.assertEqual(self.uploads, [15])
+    def test_short_return_and_long_gap_status(self):
+        self.begin(); self.step(2, 80); self.step(4, 40)
+        self.assertEqual(len(self.fake.published), 2)
+        self.release.set(); self.controller.job.join(1)
+        self.step(15, 40); self.step(15.5, 40)
+        self.assertEqual(self.lookups, [15]); self.assertEqual(len(self.fake.published), 3)
+        self.step(26, 80); self.assertEqual(self.lookups, [15, 15])
+        self.assertEqual(self.controller.state, 'LATCHED')
+        self.status = 'ANALYZING'; self.step(27, 80)
+        self.assertEqual(self.controller.state, 'ARMED')
+        self.assertEqual(self.uploads, [15])
+    def test_long_gap_while_busy_never_publishes(self):
+        self.begin(); self.step(11, 40)
+        self.assertEqual(len(self.fake.published), 1); self.assertEqual(self.lookups, [])
+        self.release.set(); self.controller.job.join(1)
+        self.step(12, 40); self.step(12.5, 40)
+        self.assertEqual(self.lookups, [15]); self.assertEqual(len(self.fake.published), 2)
+    def test_failed_ack_stops_and_no_retry(self):
+        self.begin(); self.fake.ack = False
+        with self.assertRaises(RuntimeError): self.step(2, 40)
+        with self.assertRaises(RuntimeError): self.step(4, 40)
+        self.assertEqual(len(self.fake.published), 2)
+    def test_close_waits_for_job(self):
+        self.begin(); self.release.set(); self.controller.close()
+        self.assertEqual(self.uploads, [15]); self.assertFalse(self.controller.job.is_alive())
+
+class StatusHTTPTests(HTTPTests):
+    def test_get_status_validation(self):
+        from proximity_camera.spring import get_event_status
+        def do_get(handler):
+            handler.send_response(Handler.status); handler.end_headers()
+            handler.wfile.write(json.dumps(Handler.result).encode())
+        with patch.object(Handler, 'do_GET', do_get, create=True):
+            Handler.status = 200
+            Handler.result = {'eventId': 15, 'deviceId': 1, 'status': 'DETECTED'}
+            self.assertEqual(get_event_status(self.cfg, 15), 'DETECTED')
+            for result in ({'eventId': 16, 'deviceId': 1, 'status': 'DETECTED'}, {'eventId': 15, 'deviceId': True, 'status': 'DETECTED'}, {'eventId': 15, 'deviceId': 1, 'status': 'CREATED'}):
+                Handler.result = result
+                with self.assertRaises(RuntimeError): get_event_status(self.cfg, 15)
+            Handler.status = 302
+            with self.assertRaises(RuntimeError): get_event_status(self.cfg, 15)
+
+class SchoolConfigTests(unittest.TestCase):
+    def test_school_profile_and_validation(self):
+        cfg = load_config(Path(__file__).resolve().parents[1] / 'config.school.json')
+        validate_spring_config(cfg)
+        self.assertEqual((cfg['mqtt_host'], cfg['spring_base_url'], cfg['mqtt_client_id']),
+                         ('10.21.33.82', 'http://10.21.33.82:8080', 'doorbell-sensor-camera-1'))
+        with tempfile.TemporaryDirectory() as d:
+            file = Path(d) / 'config.json'
+            for value in ('', 'bad\nclient', 42, 'x' * 129):
+                file.write_text(json.dumps({'mqtt_client_id': value}))
+                with self.assertRaises(ValueError): load_config(file)
+            file.write_text(json.dumps({'presence_interval_s': 9, 'mqtt_host': '127.0.0.1', 'spring_base_url': 'http://127.0.0.1'}))
+            with self.assertRaises(ValueError): validate_spring_config(load_config(file))
+            file.write_text(json.dumps({'interval_s': 10, 'mqtt_host': '127.0.0.1', 'spring_base_url': 'http://127.0.0.1'}))
+            local_cfg = load_config(file)
+            self.assertEqual(local_cfg['interval_s'], 10)
+            with self.assertRaises(ValueError): validate_spring_config(local_cfg)
+
+class InitialPublishTests(unittest.TestCase):
+    def test_event_deadline_is_shared_between_puback_and_reply(self):
+        client = FakeClient(); client.respond = None
+        cfg = dict(DEFAULTS, mqtt_host='127.0.0.1', event_timeout_s=5)
+        events = EventClient(cfg, client); events.start()
+        recorded = []
+        def publish(timeout=None): recorded.append(timeout)
+        events.publish_presence = publish
+        class Received:
+            def clear(self): pass
+            def wait(self, timeout): recorded.append(timeout); return False
+            def set(self): pass
+        events.received = Received()
+        with patch('proximity_camera.mqtt.time.monotonic', side_effect=[100, 104]):
+            with self.assertRaises(RuntimeError): events.create_event('r', 40)
+        self.assertEqual(recorded, [2, 1]); events.close()
+
+class ShutdownTests(AsyncTests):
+    def test_cancel_prevents_upload_after_camera(self):
+        self.begin()
+        self.controller.cancel()
+        self.release.set()
+        self.controller.close()
+        self.assertEqual(self.uploads, [])
+
+    def test_worker_error_is_not_hidden_by_poison(self):
+        self.begin()
+        self.controller.job_error = RuntimeError('camera failed detail')
+        self.events.abort()
+        with self.assertRaisesRegex(RuntimeError, 'camera failed detail'):
+            self.controller.check()
+
+    def test_timeout_is_reported(self):
+        class Stuck:
+            def join(self, timeout): pass
+            def is_alive(self): return True
+        self.controller.job = Stuck()
+        with self.assertRaisesRegex(RuntimeError, 'did not stop'):
+            self.controller.close()
+        self.controller.job = None
+
+class MaxCapturesCLITests(unittest.TestCase):
+    def test_one_capture_keeps_reading_until_worker_done(self):
+        from proximity_camera.__main__ import main
+        from unittest.mock import MagicMock
+        reads = []
+        class Sensor:
+            def __init__(self, *args): pass
+            def read(self): reads.append(1); return Reading(40, 0, None)
+            def close(self): pass
+        class Controller:
+            def __init__(self, *args): self.attempts = 0; self.failures = 0
+            def step(self, reading): self.attempts = 1
+            def busy(self): return len(reads) < 3
+            def close(self): pass
+            def cancel(self): pass
+        cfg = dict(DEFAULTS, mqtt_host='127.0.0.1', spring_base_url='http://127.0.0.1:8080')
+        with patch('proximity_camera.__main__.load_config', return_value=cfg), \
+             patch('proximity_camera.__main__.MockSensor', Sensor), \
+             patch('proximity_camera.__main__.time.sleep'), \
+             patch('proximity_camera.mqtt.EventClient', return_value=MagicMock()), \
+             patch('proximity_camera.spring.SpringIntegration', return_value=MagicMock()), \
+             patch('proximity_camera.async_controller.AsyncSpringController', Controller):
+            self.assertEqual(main(['run', '--mode', 'mock', '--spring', '--max-captures', '1']), 0)
+        self.assertEqual(len(reads), 3)

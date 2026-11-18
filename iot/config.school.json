@@ -1,0 +1,11 @@
+{
+  "mqtt_host": "10.21.33.82",
+  "mqtt_port": 1883,
+  "spring_base_url": "http://10.21.33.82:8080",
+  "device_id": 1,
+  "event_timeout_s": 5,
+  "mqtt_client_id": "doorbell-sensor-camera-1",
+  "sensor_backend": "rpi_gpio",
+  "trigger_bcm": 20,
+  "echo_bcm": 16
+}

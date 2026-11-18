@@ -4,7 +4,7 @@ import signal
 import sys
 import time
 from .camera import Camera, worker, worker_signal
-from .config import load_config
+from .config import load_config, validate_spring_config
 from .controller import Controller
 from .sensor import HCSR04, MockSensor, RPiGPIOHCSR04
 
@@ -31,17 +31,23 @@ def main(argv=None):
     p.add_argument("width", type=int)
     p.add_argument("height", type=int)
     args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.command == "_worker":
         signal.signal(signal.SIGTERM, worker_signal)
         signal.signal(signal.SIGINT, worker_signal)
-        worker(args.path, args.settle, args.af_timeout, args.capture_timeout, args.width, args.height)
-        return 0
+        try:
+            worker(args.path, args.settle, args.af_timeout, args.capture_timeout, args.width, args.height)
+            return 0
+        except RuntimeError as exc:
+            logging.error("camera worker result=failed reason=%s", exc)
+            return 1
     signal.signal(signal.SIGTERM, _shutdown_signal)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         cfg = load_config(args.config)
         if args.command == "run" and args.max_captures is not None and args.max_captures < 1:
             raise ValueError("--max-captures must be positive")
+        if args.command == "run" and args.spring:
+            validate_spring_config(cfg)
         logging.info("mode=%s command=%s", args.mode.upper(), args.command)
         camera = Camera(cfg, args.mode)
         if args.command == "camera":
@@ -62,15 +68,17 @@ def main(argv=None):
         integration = None
         try:
             if args.command == "run" and args.spring:
-                if not cfg["mqtt_host"] or not cfg["spring_base_url"]:
-                    raise ValueError("--spring requires mqtt_host and spring_base_url")
                 from .mqtt import EventClient
                 from .spring import SpringIntegration
                 events = EventClient(cfg)
                 events.start()
                 integration = SpringIntegration(cfg, events)
                 logging.info("spring=REAL mqtt=REAL http=REAL sensor_camera_mode=%s", args.mode.upper())
-            controller = Controller(sensor, camera, cfg, integration=integration)
+            if integration:
+                from .async_controller import AsyncSpringController
+                controller = AsyncSpringController(sensor, camera, cfg, integration)
+            else:
+                controller = Controller(sensor, camera, cfg)
             while True:
                 try:
                     reading = sensor.read()
@@ -81,15 +89,24 @@ def main(argv=None):
                     logging.info("sensor distance_cm=%s error=%s", reading.distance_cm, reading.error)
                 else:
                     controller.step(reading)
-                    if args.max_captures and controller.attempts >= args.max_captures:
+                    if (args.max_captures and controller.attempts >= args.max_captures and
+                            (not integration or not controller.busy())):
                         break
                 time.sleep(cfg["interval_s"])
+        except BaseException:
+            if integration and "controller" in locals():
+                controller.cancel()
+            raise
         finally:
             try:
-                if integration:
-                    integration.close()
+                if integration and "controller" in locals():
+                    controller.close()
             finally:
-                sensor.close()
+                try:
+                    if integration:
+                        integration.close()
+                finally:
+                    sensor.close()
         return 1 if controller.failures else 0
     except KeyboardInterrupt:
         logging.info("shutdown requested")

@@ -1,6 +1,8 @@
 """One-in-flight MQTT event exchange; ambiguous state requires operator intervention."""
 import json
+import logging
 import threading
+import time
 
 MAX_LONG = 2**63 - 1
 
@@ -25,7 +27,7 @@ class EventClient:
         self.sub_mid = None
         if client is None:
             import paho.mqtt.client as mqtt
-            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv311,
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=config.get("mqtt_client_id") or "doorbell-sensor-camera-%s" % config["device_id"], protocol=mqtt.MQTTv311,
                                  clean_session=True, reconnect_on_failure=False)
             client.connect_timeout = config['connection_timeout_s']
         self.client = client
@@ -98,6 +100,7 @@ class EventClient:
             if not self.ready.wait(self.cfg['connection_timeout_s']):
                 with self.lock: self._fail()
             self.check()
+            logging.info("mqtt ready host=%s port=%s client_id=%s subscribe=%s qos=1", self.cfg["mqtt_host"], self.cfg["mqtt_port"], self.cfg.get("mqtt_client_id") or "doorbell-sensor-camera-%s" % self.cfg["device_id"], self.event_topic)
         except BaseException:
             self.close()
             raise
@@ -114,18 +117,31 @@ class EventClient:
             self.pending = True
             self.event_id = None
             self.received.clear()
-        payload = json.dumps({'deviceId': self.cfg['device_id'], 'sensorType': self.cfg['sensor_type'], 'value': 1}, separators=(',', ':'))
+        deadline = time.monotonic() + self.cfg['event_timeout_s']
+        try:
+            self.publish_presence(timeout=min(self.cfg['presence_ack_timeout_s'], self.cfg['event_timeout_s']))
+            if not self.received.wait(max(0, deadline - time.monotonic())):
+                raise RuntimeError('MQTT event response timed out')
+            self.check()
+            with self.lock: return self.event_id
+        except BaseException:
+            with self.lock: self._fail()
+            raise
+
+    def publish_presence(self, timeout=None):
+        self.check()
+        with self.lock:
+            if self.closing or not self.pending:
+                raise RuntimeError('MQTT session unavailable')
+        payload = json.dumps({'deviceId': self.cfg['device_id'], 'sensorType': self.cfg['sensor_type'], 'value': 1, 'presenceDetected': True}, separators=(',', ':'))
         try:
             info = self.client.publish(self.sensor_topic, payload, qos=1, retain=False)
             if info.rc != 0:
                 raise RuntimeError('MQTT publish failed')
-            info.wait_for_publish(timeout=self.cfg['event_timeout_s'])
+            info.wait_for_publish(timeout=self.cfg['presence_ack_timeout_s'] if timeout is None else timeout)
             if not info.is_published():
                 raise RuntimeError('MQTT publish acknowledgement timed out')
-            if not self.received.wait(self.cfg['event_timeout_s']):
-                raise RuntimeError('MQTT event response timed out')
             self.check()
-            with self.lock: return self.event_id
         except BaseException:
             with self.lock: self._fail()
             raise

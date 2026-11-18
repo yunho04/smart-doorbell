@@ -192,19 +192,61 @@ class CameraTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'timed out'): Camera(dict(DEFAULTS,output_dir=d,min_free_bytes=0),'hardware',start).capture('one')
             self.assertIn('terminate',processes[0].actions); self.assertIn('kill',processes[0].actions)
             self.assertEqual(processes[0].actions[-1],('wait',None)); self.assertEqual(list(Path(d).iterdir()),[])
-    def test_autofocus_failure_closes(self):
+    def test_worker_autofocus_and_cleanup(self):
+        from concurrent.futures import TimeoutError as FutureTimeoutError
+        from types import SimpleNamespace as NS
+        controls = NS(AfModeEnum=NS(Manual=0, Auto=1), AfTriggerEnum=NS(Start=0),
+                      AfStateEnum=NS(Idle=0, Scanning=1, Focused=2, Failed=3))
         class Picam:
-            instance = None
-            def __init__(self): Picam.instance=self; self.actions=[]
-            def create_still_configuration(self, **kwargs): return kwargs
-            def configure(self, config): pass
-            def start(self, **kwargs): pass
-            def autofocus_cycle(self, **kwargs): return 'job'
-            def wait(self, job, timeout): return False
+            def __init__(self, states, failure): self.states, self.failure, self.actions = iter(states), failure, []
+            def create_still_configuration(self, **kwargs): self.actions.append(('config', kwargs)); return kwargs
+            def configure(self, config):
+                if self.failure == 'configure': raise RuntimeError('configure failed')
+            def start(self, **kwargs):
+                self.actions.append(('start', kwargs))
+                if self.failure == 'start': raise RuntimeError('start failed')
+            def set_controls(self, values): self.actions.append(('controls', values))
+            def capture_metadata(self, **kwargs): self.actions.append(('metadata', kwargs)); return 'metadata_job'
+            def capture_file(self, path, **kwargs): self.actions.append(('capture', path, kwargs)); return 'capture_job'
+            def wait(self, job, timeout):
+                self.actions.append(('wait', job, timeout))
+                if self.failure == 'future_timeout' and job == 'metadata_job': raise FutureTimeoutError('job timed out')
+                if self.failure == job: raise TimeoutError('job timed out')
+                if job == 'metadata_job': return next(self.states)
+            def cancel_all_and_flush(self): self.actions.append('flush')
             def stop(self): self.actions.append('stop')
             def close(self): self.actions.append('close')
-        with self.assertRaisesRegex(RuntimeError,'autofocus'): worker('unused.jpg',0,1,1,1280,720,Picam)
-        self.assertEqual(Picam.instance.actions,['stop','close'])
+        def run(states, failure=None, ticks=None):
+            camera = Picam(states, failure)
+            clock = iter(ticks or [0, .1, .2, .3, .4, .5, .6])
+            return camera, lambda: worker('photo.jpg', 0, 1, 4, 1280, 720, lambda: camera, controls, lambda: next(clock))
+        for states in ([{'AfState': 2}], [{'AfState': 1}, {'AfState': 2}]):
+            with self.subTest(states=states):
+                camera, call = run(states); call()
+                self.assertEqual(camera.actions[0], ('config', {'main': {'size': (1280, 720)}, 'buffer_count': 3, 'queue': False, 'controls': {'AfMode': 0, 'FrameDurationLimits': (33333, 100000)}}))
+                self.assertIn(('start', {'show_preview': False}), camera.actions)
+                self.assertIn(('controls', {'AfMode': 1, 'AfTrigger': 0}), camera.actions)
+                self.assertIn(('capture', 'photo.jpg', {'wait': False}), camera.actions)
+                self.assertIn(('wait', 'capture_job', 4), camera.actions)
+                self.assertAlmostEqual(next(a[2] for a in camera.actions if isinstance(a, tuple) and a[:2] == ('wait', 'metadata_job')), .9)
+                self.assertEqual(camera.actions[-2:], ['stop', 'close'])
+        cases = [([{'AfState': 3}], None, None, 'autofocus failed', False),
+                 ([{'AfState': 0}], None, [0, .1, .2, 1], 'autofocus timed out', True),
+                 ([], 'metadata_job', None, 'autofocus timed out', True),
+                 ([], 'future_timeout', None, 'autofocus timed out', True),
+                 ([{'AfState': 2}], 'capture_job', None, 'capture timed out', True),
+                 ([{}], None, None, 'unsupported autofocus metadata', False),
+                 ([{'AfState': 99}], None, None, 'unsupported autofocus metadata', False),
+                 ([], 'configure', None, 'configure failed', False),
+                 ([], 'start', None, 'start failed', False)]
+        for states, failure, ticks, message, flush in cases:
+            with self.subTest(message=message, failure=failure, states=states):
+                camera, call = run(states, failure, ticks)
+                with self.assertRaisesRegex(RuntimeError, message): call()
+                if flush: self.assertEqual(camera.actions[-3:], ['flush', 'stop', 'close'])
+                else: self.assertEqual(camera.actions[-1], 'close')
+                if failure != 'capture_job': self.assertFalse(any(isinstance(a, tuple) and a[0] == 'capture' for a in camera.actions))
+                if failure in ('configure', 'start'): self.assertNotIn('stop', camera.actions)
 
 class CLITests(unittest.TestCase):
     def test_mock_without_pi_libraries(self):

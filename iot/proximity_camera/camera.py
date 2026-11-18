@@ -1,10 +1,12 @@
 import os
+import logging
 import shutil
 import struct
 import subprocess
 import sys
 import time
 import zlib
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 
 
@@ -16,26 +18,72 @@ def _png():
             chunk(b"IDAT", zlib.compress((b"\x00" + b"\x66\x99\xcc" * 128) * 72)) + chunk(b"IEND", b""))
 
 
-def worker(path, settle, af_timeout, capture_timeout, width, height, camera_class=None):
+def worker(path, settle, af_timeout, capture_timeout, width, height, camera_class=None, controls=None, clock=None):
     if camera_class is None:
         from picamera2 import Picamera2
         camera_class = Picamera2
+    if controls is None:
+        from libcamera import controls
+    if clock is None:
+        clock = time.monotonic
     camera = camera_class()
     started = False
     try:
-        camera.configure(camera.create_still_configuration(main={"size": (width, height)}))
+        camera.configure(camera.create_still_configuration(
+            main={"size": (width, height)}, buffer_count=3, queue=False,
+            controls={"AfMode": controls.AfModeEnum.Manual,
+                      "FrameDurationLimits": (33333, 100000)}))
         camera.start(show_preview=False)
         started = True
         time.sleep(settle)
-        if not camera.wait(camera.autofocus_cycle(wait=False), timeout=af_timeout):
-            raise RuntimeError("autofocus failed")
-        camera.wait(camera.capture_file(str(path), wait=False), timeout=capture_timeout)
+        camera.set_controls({"AfMode": controls.AfModeEnum.Auto,
+                             "AfTrigger": controls.AfTriggerEnum.Start})
+        start = clock()
+        deadline = start + af_timeout
+        last_state = None
+        logging.info("camera autofocus started timeout_s=%s", af_timeout)
+        try:
+            while True:
+                remaining = deadline - clock()
+                if remaining <= 0:
+                    raise TimeoutError("autofocus deadline elapsed")
+                metadata = camera.wait(camera.capture_metadata(wait=False), timeout=remaining)
+                state = metadata.get("AfState")
+                elapsed = clock() - start
+                if state != last_state:
+                    logging.info("camera autofocus state=%s lens_position=%s elapsed_s=%.2f",
+                                 state, metadata.get("LensPosition"), elapsed)
+                    last_state = state
+                if elapsed >= af_timeout:
+                    raise TimeoutError("autofocus deadline elapsed")
+                if state == controls.AfStateEnum.Focused:
+                    break
+                if state == controls.AfStateEnum.Failed:
+                    raise RuntimeError("autofocus failed")
+                if state not in (controls.AfStateEnum.Idle, controls.AfStateEnum.Scanning):
+                    raise RuntimeError("unsupported autofocus metadata: AfState=%r" % (state,))
+        except (TimeoutError, FutureTimeoutError) as exc:
+            _flush_timed_out_job(camera)
+            raise RuntimeError("autofocus timed out after %s seconds (last AfState=%s)" % (af_timeout, last_state)) from exc
+        try:
+            camera.wait(camera.capture_file(str(path), wait=False), timeout=capture_timeout)
+        except (TimeoutError, FutureTimeoutError) as exc:
+            _flush_timed_out_job(camera)
+            raise RuntimeError("capture timed out after %s seconds" % capture_timeout) from exc
     finally:
         try:
             if started:
                 camera.stop()
         finally:
             camera.close()
+
+
+def _flush_timed_out_job(camera):
+    # After a timeout the job state is uncertain; flush only for cleanup.
+    try:
+        camera.cancel_all_and_flush()
+    except Exception:
+        logging.exception("camera job flush failed during timeout cleanup")
 
 
 def _stop_process(process):

@@ -15,11 +15,12 @@ class SpringIntegration:
     def create_event(self, request_id, distance_cm):
         return self.events.create_event(request_id, distance_cm)
 
-    def upload(self, event_id, path, request_id):
+    def upload(self, event_id, path, request_id, finish=True):
         self.events.check()
         upload_image(self.config, event_id, path)
         self.events.check()
-        self.events.finish()
+        if finish:
+            self.events.finish()
 
     def abort(self):
         self.events.abort()
@@ -60,5 +61,30 @@ def upload_image(config, event_id, path):
                 raise ValueError()
         except (ValueError, UnicodeDecodeError):
             raise RuntimeError('invalid Spring image response')
+    finally:
+        conn.close()
+
+
+def get_event_status(config, event_id):
+    if not valid_id(event_id):
+        raise ValueError('invalid event ID')
+    url = urlsplit(config['spring_base_url'])
+    cls = http.client.HTTPSConnection if url.scheme == 'https' else http.client.HTTPConnection
+    conn = cls(url.hostname, url.port, timeout=config['session_status_timeout_s'])
+    try:
+        conn.request('GET', '/api/v1/events/%s' % event_id)
+        response = conn.getresponse()
+        data = response.read(65537)
+        if response.status != 200 or len(data) > 65536:
+            raise RuntimeError('Spring event lookup failed (HTTP %s)' % response.status)
+        try:
+            obj = json.loads(data)
+            if (not isinstance(obj, dict) or not valid_id(obj.get('eventId')) or obj['eventId'] != event_id or
+                not valid_id(obj.get('deviceId')) or obj['deviceId'] != config['device_id'] or
+                obj.get('status') not in ('DETECTED', 'ANALYZING', 'COMPLETED')):
+                raise ValueError()
+        except (ValueError, UnicodeDecodeError):
+            raise RuntimeError('invalid Spring event response')
+        return obj['status']
     finally:
         conn.close()
