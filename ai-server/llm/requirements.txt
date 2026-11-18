@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+python-dotenv
+httpx
+pytest
+
+# 실제 구현 단계에서 추가
+# faster-whisper
+# numpy
+# openai        # 또는 anthropic / google-genai

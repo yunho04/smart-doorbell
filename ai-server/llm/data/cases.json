@@ -1,0 +1,30 @@
+[
+  {
+    "case_id": "seed_001",
+    "event_id": 0,
+    "text": "14시 방문, 20초 체류, 24시간 내 0회 접근, 충격 1회, 초인종 누름, 택배 상자 있음, 방문 목적 DELIVERY",
+    "features": {"hour": 14, "stay_sec": 20, "repeat_24h": 0, "shock_count": 1, "doorbell_pressed": true, "person_count": 1, "person_visible_sec": 18, "package_detected": true, "purpose": "DELIVERY", "purpose_confidence": 0.9},
+    "label": "NORMAL"
+  },
+  {
+    "case_id": "seed_002",
+    "event_id": 0,
+    "text": "3시 방문, 180초 체류, 24시간 내 2회 접근, 충격 3회, 초인종 누르지 않음, 택배 상자 없음, 방문 목적 UNKNOWN",
+    "features": {"hour": 3, "stay_sec": 180, "repeat_24h": 2, "shock_count": 3, "doorbell_pressed": false, "person_count": 1, "person_visible_sec": 170, "package_detected": false, "purpose": "UNKNOWN", "purpose_confidence": 0.0},
+    "label": "DANGER"
+  },
+  {
+    "case_id": "seed_003",
+    "event_id": 0,
+    "text": "19시 방문, 90초 체류, 24시간 내 1회 접근, 충격 0회, 초인종 누르지 않음, 택배 상자 없음, 방문 목적 UNKNOWN",
+    "features": {"hour": 19, "stay_sec": 90, "repeat_24h": 1, "shock_count": 0, "doorbell_pressed": false, "person_count": 1, "person_visible_sec": 85, "package_detected": false, "purpose": "UNKNOWN", "purpose_confidence": 0.0},
+    "label": "CAUTION"
+  },
+  {
+    "case_id": "seed_004",
+    "event_id": 0,
+    "text": "11시 방문, 40초 체류, 24시간 내 0회 접근, 충격 0회, 초인종 누름, 택배 상자 없음, 방문 목적 REPAIR",
+    "features": {"hour": 11, "stay_sec": 40, "repeat_24h": 0, "shock_count": 0, "doorbell_pressed": true, "person_count": 1, "person_visible_sec": 38, "package_detected": false, "purpose": "REPAIR", "purpose_confidence": 0.9},
+    "label": "NORMAL"
+  }
+]
