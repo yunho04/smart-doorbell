@@ -1,4 +1,5 @@
 """실행: python test_app.py  (또는 pytest). ultralytics 에 들어 있는 bus.jpg(사람 4명+버스)로 확인."""
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -61,6 +62,22 @@ def test_representative_upload():
         m.requests.post, m.SPRING_URL = real, None
 
 
+def test_saves_frames_per_event_folder():
+    with tempfile.TemporaryDirectory() as d:
+        m.SAVE_DIR = d
+        try:
+            post(404), post(404)
+            [folder] = Path(d).iterdir()
+            assert folder.name.startswith("event404_")
+            assert sorted(p.name for p in folder.iterdir()) == ["frame0001.jpg", "frame0002.jpg"]
+        finally:
+            m.SAVE_DIR = None
+
+
+def test_latest_page_is_localhost_only():
+    assert client.get("/vision/latest").status_code == 403  # TestClient 는 localhost 가 아님
+
+
 def test_rejects_non_image():
     assert post(1, data=b"not an image").status_code == 400
 
@@ -76,6 +93,7 @@ def test_token():
 
 if __name__ == "__main__":
     for t in (test_person_detected, test_judge_rules, test_sends_every_frame_to_llm, test_representative_upload,
-              test_rejects_non_image, test_token):
+              test_saves_frames_per_event_folder, test_latest_page_is_localhost_only, test_rejects_non_image,
+              test_token):
         t()
     print("OK")

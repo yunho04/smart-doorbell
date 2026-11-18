@@ -5,6 +5,7 @@ Pi가 방문 Event 동안 사진을 1초에 1장씩 보낸다 -> 장마다 물�
 Event 가 끝나면 LLM(허인혜)이 고른 frame_no 사진 1장을 Spring 에 대표 사진으로 올린다 (11-17 톡방, 11-18 체크리스트 15단계).
 실행: uvicorn app:app --host 0.0.0.0 --port 8000
 """
+import base64
 import json
 import logging
 import os
@@ -13,11 +14,13 @@ import time
 import urllib.request
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
 
 import cv2
 import numpy as np
 import requests  # ultralytics 가 이미 깔아 둠 (multipart 업로드용)
-from fastapi import BackgroundTasks, Body, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Body, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse
 from ultralytics import YOLOE
 
 # 찾을 물체(글로 지정)와 라벨별 신뢰도 하한. 11-16 Wikimedia 사진 16장으로 잡은 값, 현관 카메라 사진으로 다시 조정
@@ -32,6 +35,7 @@ KEEP_FRAMES = 300  # Event 당 메모리에 남길 사진 수 (대표 사진 업
 MODEL = os.getenv("VISION_MODEL", "yoloe-26m-seg.pt")  # 서버가 느리면 yoloe-26s-seg.pt (장당 0.6초 -> 0.25초)
 LLM_URL = os.getenv("LLM_URL")  # 허인혜 LLM 서버 주소. 비우면 안 보냄
 SPRING_URL = os.getenv("SPRING_URL")  # 최윤호 Spring 주소 (예: http://10.21.33.82:8080). 대표 사진 업로드용
+SAVE_DIR = os.getenv("SAVE_DIR")  # 설정하면 사진을 Event 폴더별 파일로 저장 (테스트용). 방문자 사진이라 기본은 저장 안 함 (SAD 6)
 TOKEN = os.getenv("VISION_API_TOKEN")  # SAD 6.1 장치 키. 비우면 검사 안 함 (로컬 연동 테스트용)
 MAX_BYTES = 10 * 1024 * 1024
 
@@ -41,6 +45,7 @@ model.predict(np.zeros((480, 640, 3), np.uint8), verbose=False)  # warm-up: 첫 
 app = FastAPI(title="doorbell-vision")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger("vision")
+logging.getLogger("uvicorn.access").addFilter(lambda r: "/vision/latest" not in r.getMessage())  # 1초 새로고침 줄은 숨김
 events: dict[int, dict] = {}  # ponytail: 메모리에만 둠. 서버 재시작하면 진행 중이던 Event 누적값이 사라짐
 
 
@@ -114,9 +119,15 @@ async def analyze(
     now = time.time()
     for k in [k for k, e in events.items() if now - e["updated"] > EVENT_TTL]:
         del events[k]
-    e = events.setdefault(event_id, {"frames": 0, "counts": Counter(), "first": None, "last": None, "jpeg": {}})
+    e = events.setdefault(event_id, {"frames": 0, "counts": Counter(), "first": None, "last": None, "jpeg": {},
+                                     "dir": None})
     e["frames"] += 1
     e["updated"] = now
+    if SAVE_DIR:  # 폴더 이름 = eventId + 첫 사진 받은 시각, 파일 이름 = frame_no
+        if e["dir"] is None:
+            e["dir"] = Path(SAVE_DIR) / f"event{event_id}_{datetime.now():%Y%m%d-%H%M%S}"
+            e["dir"].mkdir(parents=True, exist_ok=True)
+        (e["dir"] / f"frame{e['frames']:04d}.jpg").write_bytes(data)
     e["jpeg"][e["frames"]] = data  # ponytail: 메모리 보관. Event 당 KEEP_FRAMES 장 넘으면 오래된 것부터 버림
     if len(e["jpeg"]) > KEEP_FRAMES:
         e["jpeg"].pop(next(iter(e["jpeg"])))
@@ -145,11 +156,28 @@ async def analyze(
         "vision_risk_level": level,
         "vision_reasons": reasons,
     }
+    e["result"] = result
     log_json(event_id, "vision_analyze", ms, f"frame={e['frames']} person={persons} risk={level}")
 
     if LLM_URL:  # 11-17 톡방: 매초 보냄
         background.add_task(send_to_llm, result)
     return result
+
+
+@app.get("/vision/latest", response_class=HTMLResponse)
+def latest(request: Request):
+    """마지막으로 받은 사진 + 판단을 1초마다 새로고침해서 보여 준다. 방문자 사진이라 내 PC(localhost)에서만 (SAD 6)."""
+    if request.client.host not in ("127.0.0.1", "::1"):
+        raise HTTPException(403, "localhost only")
+    page = '<meta http-equiv="refresh" content="1">'
+    if not events:
+        return page + "아직 받은 사진 없음"
+    event_id, e = max(events.items(), key=lambda kv: kv[1]["updated"])
+    r, img = e["result"], base64.b64encode(e["jpeg"][e["frames"]]).decode()
+    labels = ", ".join(sorted({o["label"] for o in r["objects"]})) or "없음"
+    return (page + f"<p>event {event_id} · frame {r['frame_no']} · {r['captured_at']} · <b>{r['vision_risk_level']}</b>"
+            f" · 이번 사진: {labels} · 근거: {', '.join(r['vision_reasons']) or '없음'}</p>"
+            f'<img src="data:image/jpeg;base64,{img}" style="max-width:100%">')
 
 
 @app.post("/vision/events/{event_id}/representative")

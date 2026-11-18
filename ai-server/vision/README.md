@@ -151,6 +151,9 @@ LLM 서버가 죽어 있어도 Vision은 계속 돌고, 실패는 로그에 남�
 |---|---|---|
 | `LLM_URL` | 없음 | LLM 서버 주소. 비우면 안 보냄 |
 | `SPRING_URL` | 없음 | Spring 주소 (예: `http://10.21.33.82:8080`). 대표 사진 업로드용 |
+| `SAVE_DIR` | 없음 | 설정하면 사진을 `SAVE_DIR/event{id}_{첫 사진 시각}/frame0001.jpg`로 저장 (테스트용). 방문자 사진이라 기본은 저장 안 함 (SAD 6장). 레포에 올리지 말 것 |
+
+확인용 페이지: 서버 PC 브라우저에서 `http://127.0.0.1:8000/vision/latest` — 마지막 사진·위험도·근거를 1초마다 새로고침 (localhost에서만 열림).
 | `VISION_MODEL` | `yoloe-26m-seg.pt` | 느리면 `yoloe-26s-seg.pt` |
 | `VISION_API_TOKEN` | 없음 | 설정하면 Bearer 토큰 검사. 비우면 검사 안 함 (로컬 연동 테스트용) |
 

@@ -1,4 +1,5 @@
-.venv/
+captures/
 __pycache__/
 *.pt
 *.ts
+.venv/
