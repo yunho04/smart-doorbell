@@ -1,8 +1,16 @@
-# Vision 서버
+---
+title: Vision 서버 README
+created: 2026-11-16
+updated: 2026-11-16
+tags: [course/클라우드AIoT, project/스마트도어벨, dev/python]
+source: SAD v1.1 3.1 구성도·6.1·8장, ERD v1.1 VISION_RESULTS, 11-16 모델 비교 시험
+status: growing
+---
 
-담당: 장준용
+# Vision 서버 (장준용)
 
 Pi가 방문 Event 동안 **1초에 1장** 사진을 보내면, 장마다 물체를 찾고 Event 단위로 모아 **1차 위험도**를 매긴 뒤 **LLM 서버로 보낸다**. LLM은 이 1차 판단과 다른 센서 값으로 2차 판단을 한다. 이미지는 밖으로 안 나가고 라벨만 넘긴다 (SAD 6.2).
+회의 안건은 [[../회의록/Vision 모듈 회의 준비]].
 
 ## 실행
 
@@ -85,6 +93,7 @@ curl -F event_id=101 -F image=@visitor.jpg http://localhost:8000/vision/analyze
 {
   "event_id": 55,
   "frame_no": 2,
+  "captured_at": "2026-11-18T15:42:15.789+09:00",
   "person_detected": true,
   "person_count": 1,
   "objects": [{"label": "helmet", "confidence": 0.81, "bbox": [412, 180, 470, 240]}],
@@ -100,7 +109,8 @@ curl -F event_id=101 -F image=@visitor.jpg http://localhost:8000/vision/analyze
 
 | 필드 | 범위 | 설명 |
 |---|---|---|
-| `frame_no` | Event | 이 Event에서 몇 번째 사진인지 |
+| `frame_no` | Event | 이 Event에서 몇 번째 사진인지 (11-17 톡방 frameId) |
+| `captured_at` | 이번 사진 | Vision이 사진을 받은 시각 (STT와 시간 순서 맞추기용) |
 | `person_detected`, `person_count`, `objects`, `processing_ms` | 이번 사진 | ERD `VISION_RESULTS` 컬럼 이름 그대로. `bbox`는 `[x1, y1, x2, y2]` 픽셀 |
 | `person_visible_sec` | Event | 사람이 처음 보인 때부터 마지막으로 보인 때까지 초 |
 | `package_detected`, `face_covered`, `weapon_labels` | Event | 2장 이상에서 확인된 것만 |
@@ -108,9 +118,22 @@ curl -F event_id=101 -F image=@visitor.jpg http://localhost:8000/vision/analyze
 
 ### LLM으로 보내는 때
 
-`LLM_URL`로 위 JSON을 `POST`한다(타임아웃 3초). **위험도나 확인된 라벨이 바뀔 때만** 보낸다. 1초마다 보내지 않는다. 보통 한 Event에 2~4번.
-예: 1장째 LOW(아직 확인된 것 없음) → 2장째 MEDIUM(헬멧 확인) → 30초 뒤 HIGH(배회).
+`LLM_URL`로 위 JSON을 `POST`한다(타임아웃 3초). **사진마다 매번** 보낸다 (11-17 톡방에서 정함. 11-16엔 "바뀔 때만"이었음).
 LLM 서버가 죽어 있어도 Vision은 계속 돌고, 실패는 로그에 남는다.
+
+### 대표 사진 올리기 `POST /vision/events/{event_id}/representative`
+
+AI 서버가 finalize를 받은 뒤 본문 없이 호출한다. **대표 사진은 Vision이 고른다** (11-18 장준용 결정. 11-17 톡방안은 LLM이 고르는 것이었음).
+Vision이 그 사진 원본을 Spring `POST /api/v1/events/{id}/image`(multipart 키 `file`)로 올린다 (11-18 체크리스트 15단계).
+
+고르는 기준 (사진마다 점수, 가장 높은 1장만 메모리에 둠): 흉기 수 > 얼굴 가림 수 > 택배 상자 > 사람이 가장 크게(가깝게) 보인 사진. 같으면 먼저 온 사진.
+
+| 코드 | 이유 |
+|---|---|
+| 200 | 업로드 성공. 본문 = Spring 응답 `{mediaId, eventId, mediaType, filePath}` + 고른 `frame_no` |
+| 404 | 그 Event로 받은 사진이 없음 (사진이 10분 안 오면 Event 삭제) |
+| 502 | Spring 연결 실패 또는 Spring 에러 |
+| 503 | `SPRING_URL` 설정 안 됨 |
 
 ### 에러
 
@@ -126,6 +149,7 @@ LLM 서버가 죽어 있어도 Vision은 계속 돌고, 실패는 로그에 남�
 | 이름 | 기본값 | 용도 |
 |---|---|---|
 | `LLM_URL` | 없음 | LLM 서버 주소. 비우면 안 보냄 |
+| `SPRING_URL` | 없음 | Spring 주소 (예: `http://10.21.33.82:8080`). 대표 사진 업로드용 |
 | `VISION_MODEL` | `yoloe-26m-seg.pt` | 느리면 `yoloe-26s-seg.pt` |
 | `VISION_API_TOKEN` | 없음 | 설정하면 Bearer 토큰 검사. 비우면 검사 안 함 (로컬 연동 테스트용) |
 

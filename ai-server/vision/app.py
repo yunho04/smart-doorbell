@@ -1,7 +1,8 @@
 """스마트 도어벨 Vision 서버 (장준용).
 
 Pi가 방문 Event 동안 사진을 1초에 1장씩 보낸다 -> 장마다 물체를 찾고 Event 단위로 모아 1차 위험도를 매긴다
--> 요약이 바뀔 때만 LLM 서버로 보낸다. LLM이 Vision 판단 + 다른 센서로 2차 판단 (SAD 3.1 구성도: Vision -> LLM).
+-> 장마다 frame_no·captured_at 을 붙여 LLM 서버로 보낸다. LLM이 Vision 판단 + 다른 센서로 2차 판단 (SAD 3.1 구성도: Vision -> LLM).
+Event 가 끝나면 Vision 이 고른 사진 1장을 Spring 에 대표 사진으로 올린다 (11-18 장준용 결정, 체크리스트 15단계).
 실행: uvicorn app:app --host 0.0.0.0 --port 8000
 """
 import json
@@ -15,6 +16,7 @@ from datetime import datetime
 
 import cv2
 import numpy as np
+import requests  # ultralytics 가 이미 깔아 둠 (multipart 업로드용)
 from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, UploadFile
 from ultralytics import YOLOE
 
@@ -26,9 +28,9 @@ WEAPONS = {"knife", "baseball bat"}
 MIN_FRAMES = 2  # 라벨이 이 장수 이상 나와야 Event 에 반영 (한 장짜리 오탐 거르기)
 LOITER_SEC = 30  # 사람이 이 시간 넘게 보이면 배회
 EVENT_TTL = 600  # 이 시간 동안 사진이 안 오면 Event 상태 삭제
-
 MODEL = os.getenv("VISION_MODEL", "yoloe-26m-seg.pt")  # 서버가 느리면 yoloe-26s-seg.pt (장당 0.6초 -> 0.25초)
 LLM_URL = os.getenv("LLM_URL")  # 허인혜 LLM 서버 주소. 비우면 안 보냄
+SPRING_URL = os.getenv("SPRING_URL")  # 최윤호 Spring 주소 (예: http://10.21.33.82:8080). 대표 사진 업로드용
 TOKEN = os.getenv("VISION_API_TOKEN")  # SAD 6.1 장치 키. 비우면 검사 안 함 (로컬 연동 테스트용)
 MAX_BYTES = 10 * 1024 * 1024
 
@@ -65,6 +67,11 @@ def judge(seen: set[str], visible_sec: int) -> tuple[str, list[str]]:
     return level, reasons
 
 
+def check_token(authorization: str | None):
+    if TOKEN and not secrets.compare_digest((authorization or "").encode(), f"Bearer {TOKEN}".encode()):
+        raise HTTPException(401, "invalid token")
+
+
 def send_to_llm(payload: dict):
     req = urllib.request.Request(LLM_URL, json.dumps(payload, ensure_ascii=False).encode(),
                                  {"Content-Type": "application/json"})
@@ -85,8 +92,7 @@ async def analyze(
     event_id: int = Form(...),
     authorization: str | None = Header(None),
 ):
-    if TOKEN and not secrets.compare_digest((authorization or "").encode(), f"Bearer {TOKEN}".encode()):
-        raise HTTPException(401, "invalid token")
+    check_token(authorization)
     data = await image.read()
     if len(data) > MAX_BYTES:
         raise HTTPException(413, "image too large")
@@ -103,13 +109,20 @@ async def analyze(
         if p >= CLASSES[model.names[int(c)]]
     ]
     persons = sum(o["label"] == "person" for o in objects)
+    labels = [o["label"] for o in objects]
+    person_area = max(((x2 - x1) * (y2 - y1) for o in objects if o["label"] == "person"
+                       for x1, y1, x2, y2 in [o["bbox"]]), default=0)
+    # 대표 사진 점수: 흉기 > 얼굴 가림 > 택배 상자 > 사람이 크게(가깝게) 보임. ponytail: 이번 사진 라벨만 봄 (한 장 오탐도 점수에 들어감)
+    score = (sum(l in WEAPONS for l in labels), sum(l in FACE_COVER for l in labels), "cardboard box" in labels, person_area)
 
     now = time.time()
     for k in [k for k, e in events.items() if now - e["updated"] > EVENT_TTL]:
         del events[k]
-    e = events.setdefault(event_id, {"frames": 0, "counts": Counter(), "first": None, "last": None, "sent": None})
+    e = events.setdefault(event_id, {"frames": 0, "counts": Counter(), "first": None, "last": None, "best": None})
     e["frames"] += 1
     e["updated"] = now
+    if e["best"] is None or score > e["best"][0]:
+        e["best"] = (score, e["frames"], data)  # 가장 좋은 사진 1장만 메모리에 둔다
     e["counts"].update({o["label"] for o in objects})
     if persons:
         e["first"] = e["first"] or now
@@ -120,7 +133,8 @@ async def analyze(
 
     result = {
         "event_id": event_id,
-        "frame_no": e["frames"],
+        "frame_no": e["frames"],  # 11-17 톡방 frameId
+        "captured_at": datetime.now().astimezone().isoformat(timespec="milliseconds"),  # Vision 이 받은 시각
         # 이번 사진 (ERD VISION_RESULTS 컬럼 이름)
         "person_detected": persons > 0,
         "person_count": persons,
@@ -136,8 +150,30 @@ async def analyze(
     }
     log_json(event_id, "vision_analyze", ms, f"frame={e['frames']} person={persons} risk={level}")
 
-    summary = (level, tuple(sorted(seen)))  # 이게 바뀔 때만 LLM 에 보냄 (1초마다 보내지 않게)
-    if LLM_URL and summary != e["sent"]:
-        e["sent"] = summary
+    if LLM_URL:  # 11-17 톡방: 매초 보냄
         background.add_task(send_to_llm, result)
     return result
+
+
+@app.post("/vision/events/{event_id}/representative")
+def representative(event_id: int, authorization: str | None = Header(None)):
+    """Event 끝(AI 서버가 finalize 받은 뒤)에 호출. Vision 이 고른 사진 1장을
+    Spring POST /api/v1/events/{id}/image (multipart 키 file) 로 올린다."""
+    check_token(authorization)
+    best = events.get(event_id, {}).get("best")
+    if best is None:
+        raise HTTPException(404, "no frames for this event")
+    _, frame_no, jpeg = best
+    if not SPRING_URL:
+        raise HTTPException(503, "SPRING_URL not set")
+    t0, url = time.perf_counter(), f"{SPRING_URL.rstrip('/')}/api/v1/events/{event_id}/image"
+    try:
+        r = requests.post(url, files={"file": (f"event{event_id}_frame{frame_no}.jpg", jpeg, "image/jpeg")}, timeout=5)
+    except requests.RequestException as ex:
+        log_json(event_id, "vision_to_spring_image", round((time.perf_counter() - t0) * 1000), None, type(ex).__name__)
+        raise HTTPException(502, f"spring unreachable: {type(ex).__name__}")
+    log_json(event_id, "vision_to_spring_image", round((time.perf_counter() - t0) * 1000),
+             f"frame={frame_no} status={r.status_code}", None if r.ok else r.status_code)
+    if not r.ok:
+        raise HTTPException(502, f"spring {r.status_code}: {r.text[:200]}")
+    return {**r.json(), "frame_no": frame_no}
