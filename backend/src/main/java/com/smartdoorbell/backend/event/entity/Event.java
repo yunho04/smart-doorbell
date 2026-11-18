@@ -138,7 +138,14 @@ public class Event {
         this.responseText = responseText;
 
         this.status = "COMPLETED";
-        this.endedAt = LocalDateTime.now();
+        if (this.endedAt == null) {
+            this.endedAt = LocalDateTime.now();
+        }
+    }
+
+    public void startAnalysis(LocalDateTime endedAt) {
+        this.status = "ANALYZING";
+        this.endedAt = endedAt;
     }
 
     public void setStatus(String status) {
@@ -152,4 +159,3 @@ public class Event {
         return lastDetectedAt;
     }
 }
-

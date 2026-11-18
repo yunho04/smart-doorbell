@@ -4,15 +4,25 @@ import com.smartdoorbell.backend.device.entity.Device;
 import com.smartdoorbell.backend.device.repository.DeviceRepository;
 import com.smartdoorbell.backend.event.entity.Event;
 import com.smartdoorbell.backend.event.repository.EventRepository;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import com.smartdoorbell.backend.eventresponse.entity.EventResponseHistory;
 import com.smartdoorbell.backend.eventresponse.repository.EventResponseHistoryRepository;
+import com.smartdoorbell.backend.mqtt.dto.MqttEventCreatedMessage;
+import com.smartdoorbell.backend.mqtt.dto.MqttResponseMessage;
+import com.smartdoorbell.backend.mqtt.service.MqttPublisher;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.List;
 
 @Service
 @Transactional
 public class EventService {
 
+    private static final String DETECTED = "DETECTED";
+    private static final long INACTIVITY_SECONDS = 10;
+
+    private final MqttPublisher mqttPublisher;
     private final EventRepository eventRepository;
     private final DeviceRepository deviceRepository;
     private final EventResponseHistoryRepository eventResponseHistoryRepository;
@@ -20,8 +30,10 @@ public class EventService {
     public EventService(
             EventRepository eventRepository,
             DeviceRepository deviceRepository,
-            EventResponseHistoryRepository eventResponseHistoryRepository
+            EventResponseHistoryRepository eventResponseHistoryRepository,
+            MqttPublisher mqttPublisher
     ) {
+        this.mqttPublisher = mqttPublisher;
         this.eventRepository = eventRepository;
         this.deviceRepository = deviceRepository;
         this.eventResponseHistoryRepository = eventResponseHistoryRepository;
@@ -38,6 +50,51 @@ public class EventService {
         Event event = new Event(device);
 
         return eventRepository.save(event);
+    }
+
+    public void detectPresence(Long deviceId) {
+        // Serialize sensor-driven creation even when no active event exists yet.
+        Device device = deviceRepository.findLockedById(deviceId)
+                .orElseThrow(() -> new IllegalArgumentException("Device not found: " + deviceId));
+
+        Event activeEvent = eventRepository
+                .findFirstByDeviceIdAndStatusOrderByStartedAtDescIdDesc(deviceId, DETECTED)
+                .orElse(null);
+        if (activeEvent != null) {
+            activeEvent.updateLastDetectedAt();
+            return;
+        }
+
+        Event event = eventRepository.save(new Event(device));
+        mqttPublisher.publishAfterCommit(
+                "doorbell/" + deviceId + "/event",
+                new MqttEventCreatedMessage(event.getId(), "CREATED")
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public List<Long> findInactiveEventIds() {
+        return eventRepository.findInactiveIds(DETECTED, LocalDateTime.now().minusSeconds(INACTIVITY_SECONDS));
+    }
+
+    public boolean startAnalysisIfInactive(Long eventId) {
+        Event event = eventRepository.findLockedById(eventId).orElse(null);
+        if (event == null || !DETECTED.equals(event.getStatus())) {
+            return false;
+        }
+
+        LocalDateTime lastDetection = event.getLastDetectedAt();
+        if (lastDetection == null) {
+            lastDetection = event.getStartedAt();
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        if (lastDetection.isAfter(now.minusSeconds(INACTIVITY_SECONDS))) {
+            return false;
+        }
+
+        event.startAnalysis(now);
+        return true;
     }
 
     // 2. Event 조회
@@ -59,7 +116,7 @@ public class EventService {
             String responseText
     ) {
 
-        Event event = eventRepository.findById(eventId)
+        Event event = eventRepository.findLockedById(eventId)
                 .orElseThrow(() ->
                         new IllegalArgumentException("Event not found: " + eventId)
                 );
@@ -73,6 +130,7 @@ public class EventService {
 
         return event;
     }
+
     public EventResponseHistory saveResponse(
             Long eventId,
             String responseCode,
@@ -90,6 +148,11 @@ public class EventService {
                         responseText
                 );
 
-        return eventResponseHistoryRepository.save(response);
+        EventResponseHistory savedResponse = eventResponseHistoryRepository.save(response);
+        mqttPublisher.publishAfterCommit(
+                "doorbell/" + event.getDevice().getId() + "/response",
+                new MqttResponseMessage(eventId, responseCode, responseText)
+        );
+        return savedResponse;
     }
 }
