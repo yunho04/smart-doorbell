@@ -82,12 +82,13 @@ class VisionResult(BaseModel):
     """Vision 서버 -> AI 서버 : POST /vision/result
 
     Vision 담당(장준용) 코드의 전송 형식을 그대로 받는다 (snake_case).
-    Vision은 위험도나 확인된 라벨이 바뀔 때만 보낸다 (보통 Event당 2~4번).
+    11-17 결정: Vision은 사진마다(1초에 1번) 보낸다.
     """
     model_config = ConfigDict(extra="ignore")
 
     event_id: int
-    frame_no: int = Field(..., description="이 Event에서 몇 번째 사진인지")
+    frame_no: int = Field(..., description="이 Event에서 몇 번째 사진인지 (대표 사진 번호로 사용)")
+    captured_at: str | None = Field(None, description="Vision이 사진을 받은 시각 (기록용)")
     # 이번 사진
     person_detected: bool = False
     person_count: int = Field(0, ge=0)
@@ -103,7 +104,10 @@ class VisionResult(BaseModel):
 
 
 class AudioResult(CamelModel):
-    """Pi B -> AI 서버 : POST /api/v1/events/{eventId}/audio 의 응답"""
+    """Pi B -> AI 서버 : POST /api/v1/events/{eventId}/audio 의 응답
+
+    11-18 결정: Pi B는 이 응답의 responseCode로 바로 대사를 재생한다 (Spring을 거치지 않음).
+    """
     event_id: int
     turn_no: int
     transcript: str

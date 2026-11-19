@@ -22,23 +22,26 @@ cp .env.example .env               # SPRING_BASE_URL을 Mac의 실제 LAN IP로 
 - 통합 당일:
   - Spring 담당에게 → `llm.base-url=http://<AI_IP>:8001`
   - Vision 담당에게 → `LLM_URL=http://<AI_IP>:8001/vision/result` (Windows 같은 PC면 `127.0.0.1`)
-  - Pi B 담당에게 → 음성 업로드 주소 `http://<AI_IP>:8001/api/v1/events/{eventId}/audio`
+  - Pi B 담당에게 → 음성 업로드 주소 `http://<AI_IP>:8001/api/v1/events/{eventId}/audio` (응답의 `responseCode`로 바로 재생)
+  - 내 `.env`에 → `SPRING_BASE_URL=http://<Spring IP>:8080`, `VISION_BASE_URL=http://<Vision IP>:8000`
 
-## 전체 흐름 (명세서 1장)
+## 전체 흐름 (11-18 팀 결정 반영)
 
 ```
 1) Pi 센서 감지 → Spring이 Event 생성, eventId 발급 → MQTT로 Pi A·Pi B에 전달
-2) Pi A ─사진(1초 1장)─▶ Vision ─바뀔 때만─▶ LLM  POST /vision/result
-3) Pi B ─음성──▶ AI                       POST /api/v1/events/{id}/audio
+2) Pi A ─사진(1초 1장)─▶ Vision ─결과(사진마다)─▶ LLM  POST /vision/result
+3) Pi B ─음성──▶ LLM                       POST /api/v1/events/{id}/audio
      STT → 방문 목적 분류 → 사전 정의 대사 선택
-     AI ─▶ Spring POST /api/v1/events/{id}/response {responseCode, responseText}
-     → Spring이 저장 후 MQTT doorbell/{deviceId}/response 로 Pi B 재생
-4) Spring: 마지막 감지 후 10초 미감지 → AI POST /api/v1/events/{id}/finalize {eventId}  (Event당 1회)
-5) AI: 보관한 Vision + STT 기록 종합 → RAG 위험도 판단 + 요약
-     AI ─▶ Spring POST /api/v1/events/{id}/result {riskLevel, summary} → COMPLETED
+     → HTTP 응답의 responseCode로 Pi B가 바로 재생 (Spring을 거치지 않음)
+4) Spring: 마지막 감지 후 10초 미감지 → LLM POST /api/v1/events/{id}/finalize {eventId}  (Event당 1회)
+5) LLM: 보관한 Vision + STT 기록 종합 → RAG 위험도 판단 + 요약
+     LLM ─▶ Spring POST /api/v1/events/{id}/result {riskLevel, summary, responseCode, responseText} → COMPLETED
+6) LLM: 대표 사진 frame_no 선택 → Vision POST /vision/events/{id}/representative {"frame_no": N}
+     → Vision이 그 사진 원본을 Spring POST /api/v1/events/{id}/image 로 업로드
 ```
 
-Vision·STT 결과는 Spring을 거치지 않고 AI 서버가 eventId별로 보관한다 (명세서 1장).
+Vision·STT 결과는 Spring을 거치지 않고 LLM 서버가 eventId별로 보관한다 (명세서 1장).
+마지막 대사는 /result의 `responseCode`, `responseText`로 Spring DB에 남는다.
 
 ## API
 
@@ -58,10 +61,16 @@ Vision·STT 결과는 Spring을 거치지 않고 AI 서버가 eventId별로 보�
 
 | API | 시점 | 본문 |
 |---|---|---|
-| `POST {SPRING}/api/v1/events/{id}/response` | 음성마다 대사 선택 직후 | `{"responseCode":"DELIVERY_01","responseText":"..."}` |
+| `POST {SPRING}/api/v1/events/{id}/response` | **기본 사용 안 함** (`SEND_RESPONSE_TO_SPRING=true`일 때만) | `{"responseCode":"DELIVERY_01","responseText":"..."}` |
 | `POST {SPRING}/api/v1/events/{id}/result` | finalize 후 분석 완료 시 | `{"riskLevel":"LOW","summary":"...","responseCode":"DELIVERY_01","responseText":"..."}` (뒤 두 개는 마지막 재생 대사, 없으면 null. Spring `EventResultRequest`와 동일) |
 
-실패하면 1회만 재시도하고, AI 서버 처리는 계속 진행한다 (무한 재시도 없음).
+### AI 서버가 Vision으로 보내는 요청
+
+| API | 시점 | 본문 |
+|---|---|---|
+| `POST {VISION}/vision/events/{id}/representative` | /result 전송 직후 | `{"frame_no": 12}` (사람 인식 신뢰도가 가장 높은 사진, Vision이 보관 중인 최근 300장 안에서 선택) |
+
+Spring 전송은 실패하면 1회만 재시도하고, AI 서버 처리는 계속 진행한다 (무한 재시도 없음).
 
 ### 대사 코드 (`data/reply_templates.json`)
 
@@ -94,7 +103,7 @@ Mock STT는 음성 파일 이름으로 문장을 정한다: `delivery`, `visit`,
 - **Vision 1차 위험도 유지:** 최종 위험도 = max(Vision 1차, LLM 2차). 흉기·얼굴 가림으로 Vision이 높게 본 상황을 LLM이 낮추지 못한다 (NFR-01).
 - **센서 값이 없음:** Spring이 finalize 때 eventId만 보내므로 충격 횟수·반복 접근은 위험도 판단에 쓰지 않는다. 방문 시각과 체류 시간은 AI 서버가 Vision·음성을 **받은 시각** 기준으로 계산한다 (기기 시계가 틀려도 안전).
 - **규칙 하한선 없음:** Spring이 riskLevel을 그대로 저장한다 (SAD ADR-02의 하한선은 후속 단계).
-- **대표 사진:** Vision이 보낸 결과 중 사람 인식 신뢰도가 가장 높은 `frame_no`를 골라 로그와 `/state`에 남긴다. Vision은 바뀔 때만 보내므로 후보가 2~4장뿐이다. 실제 업로드(`POST /api/v1/events/{id}/image`)는 사진 파일을 가진 쪽(Pi A 또는 Vision)이 하도록 팀에서 결정.
+- **대표 사진:** LLM이 `frame_no`만 고르고, 사진 원본 업로드는 Vision이 한다. `VISION_BASE_URL`이 비어 있으면 전달하지 않는다.
 - **메모리 보관:** 진행 중인 이벤트 데이터는 메모리에 있으므로 시연 중 서버를 재시작하지 않는다.
 - **인증 없음:** MVP v1 명세에 맞춰 꺼 둠. `.env`의 `DEVICE_KEYS`, `INTERNAL_TOKEN`을 채우면 켜진다.
 

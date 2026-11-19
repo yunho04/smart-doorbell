@@ -17,3 +17,5 @@ os.environ["AUDIO_DIR"] = str(_tmp / "audio")
 os.environ["DEVICE_KEYS"] = ""
 os.environ["INTERNAL_TOKEN"] = ""
 os.environ["SPRING_BASE_URL"] = "http://spring.test:8080"
+os.environ["VISION_BASE_URL"] = "http://vision.test:8000"
+os.environ["SEND_RESPONSE_TO_SPRING"] = "false"

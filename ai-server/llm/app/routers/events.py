@@ -1,7 +1,7 @@
 """이벤트 단위 API. 모든 경로는 Spring이 발급한 eventId를 기준으로 한다.
 
 [Spring -> LLM]  POST /api/v1/events/{eventId}/finalize   종료 신호 (명세서 4장)
-[Pi B -> AI]     POST /api/v1/events/{eventId}/audio      방문자 음성 (내부 규약)
+[Pi B -> AI]     POST /api/v1/events/{eventId}/audio      방문자 음성 -> 응답으로 대사 코드 (Pi B가 바로 재생)
 [디버깅]          GET  /api/v1/events/{eventId}/state      보관 중인 데이터 확인
 """
 import logging
@@ -74,9 +74,11 @@ def receive_audio(event_id: int, file: UploadFile = File(..., description="방�
     if purpose_conf < settings.PURPOSE_CONF_THRESHOLD:
         purpose = Purpose.UNKNOWN
 
-    # 4) 사전 정의 대사 선택 -> Spring /response (Spring이 MQTT로 Pi B에 전달)
+    # 4) 사전 정의 대사 선택 -> 이 HTTP 응답으로 Pi B가 바로 재생 (11-18 결정)
     code, is_last = select_response(purpose, turn_no)
-    sent = send_response(event_id, SpringResponseRequest(response_code=code, response_text=TEMPLATES[code]))
+    sent = False
+    if settings.SEND_RESPONSE_TO_SPRING:   # 기본 꺼짐 (켜면 Spring도 MQTT로 보내 두 번 재생될 수 있음)
+        sent = send_response(event_id, SpringResponseRequest(response_code=code, response_text=TEMPLATES[code]))
 
     result = AudioResult(
         event_id=event_id, turn_no=turn_no,

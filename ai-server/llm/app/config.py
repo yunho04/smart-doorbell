@@ -23,6 +23,16 @@ class Settings:
     SPRING_BASE_URL: str = os.getenv("SPRING_BASE_URL", "http://localhost:8080").rstrip("/")
     SPRING_TIMEOUT_SEC: float = float(os.getenv("SPRING_TIMEOUT_SEC", "3"))
 
+    # 중간 대사를 Spring /response로도 보낼지 (11-18 결정: Pi B가 /audio 응답으로 바로 재생 -> 기본 끔)
+    # 켜면 Spring이 MQTT로도 Pi B에 보내서 두 번 재생될 수 있으므로 Pi B 쪽과 맞춘 뒤 켤 것
+    SEND_RESPONSE_TO_SPRING: bool = os.getenv("SEND_RESPONSE_TO_SPRING", "false").lower() == "true"
+
+    # Vision 서버 주소 (대표 사진 번호 전달용). 비우면 전달하지 않는다.
+    VISION_BASE_URL: str = os.getenv("VISION_BASE_URL", "").rstrip("/")
+    VISION_API_TOKEN: str = os.getenv("VISION_API_TOKEN", "")   # Vision이 토큰 검사를 켰을 때만
+    VISION_TIMEOUT_SEC: float = float(os.getenv("VISION_TIMEOUT_SEC", "8"))
+    VISION_KEEP_FRAMES: int = int(os.getenv("VISION_KEEP_FRAMES", "300"))  # Vision이 이벤트당 보관하는 최근 사진 수
+
     # 인증: MVP v1에서는 사용하지 않음 (비워 두면 검사 생략). 후속 단계에서 켠다.
     DEVICE_KEYS: list[str] = _list("DEVICE_KEYS")
     INTERNAL_TOKEN: str = os.getenv("INTERNAL_TOKEN", "")

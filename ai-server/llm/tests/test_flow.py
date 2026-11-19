@@ -72,10 +72,20 @@ def test_health():
     assert client.get("/health").json()["status"] == "ok"
 
 
-# ---------- 명세서 3장: 중간 대사 -> Spring /response ----------
-def test_audio_delivery_sends_response_to_spring(spring):
+# ---------- 중간 대사: Pi B가 /audio 응답으로 바로 재생 (11-18 결정) ----------
+def test_audio_returns_response_code_to_pi_only(spring):
     body = audio(15, "delivery.wav").json()
-    assert body["responseCode"] == "DELIVERY_01" and body["sentToSpring"] is True
+    assert body["responseCode"] == "DELIVERY_01"
+    assert body["responseText"] == "택배는 문 앞에 놓아 주세요. 감사합니다."
+    assert body["sentToSpring"] is False
+    assert calls_to(spring, "/response") == []                 # Spring으로 보내지 않음
+
+
+def test_audio_also_to_spring_when_enabled(spring, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "SEND_RESPONSE_TO_SPRING", True)
+    body = audio(15, "delivery.wav").json()
+    assert body["sentToSpring"] is True
 
     sent = calls_to(spring, "/api/v1/events/15/response")
     assert len(sent) == 1
@@ -97,6 +107,9 @@ def test_audio_bad_format():
 
 
 def test_spring_down_does_not_break_audio(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "SEND_RESPONSE_TO_SPRING", True)
+
     def down(*a, **k):
         raise httpx.ConnectError("down")
     monkeypatch.setattr(httpx, "post", down)
@@ -184,6 +197,50 @@ def test_state_and_best_frame():
     assert s["bestFrameNo"] == 2
     assert s["features"]["staySec"] == 6 and s["features"]["faceCovered"] is True
     assert s["features"]["visionRiskLevel"] == "MEDIUM"
+
+
+# ---------- 대표 사진: LLM이 고른 frame_no -> Vision (11-18 결정) ----------
+def test_finalize_sends_representative_frame_to_vision(spring):
+    vision(31, 1, 0, conf=0.6)
+    vision(31, 2, 1, conf=0.95)            # 사람 인식 신뢰도 최고
+    vision(31, 3, 2, conf=0.7)
+    vision(31, 4, 3, person=False)
+    finalize(31)
+    rep = calls_to(spring, "/vision/events/31/representative")
+    assert len(rep) == 1
+    assert rep[0]["url"] == "http://vision.test:8000/vision/events/31/representative"
+    assert rep[0]["json"] == {"frame_no": 2}
+    assert len(calls_to(spring, "/api/v1/events/31/result")) == 1   # 결과도 정상 전송
+
+
+def test_representative_only_from_frames_vision_still_keeps(spring, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "VISION_KEEP_FRAMES", 3)
+    vision(32, 1, 0, conf=0.99)            # 가장 좋지만 Vision에서 이미 버려진 번호
+    for n in (2, 3, 4, 5):
+        vision(32, n, n, conf=0.5 + n / 100)
+    finalize(32)
+    assert calls_to(spring, "/representative")[0]["json"] == {"frame_no": 5}
+
+
+def test_no_vision_no_representative(spring):
+    audio(33, "delivery.wav")
+    finalize(33)
+    assert calls_to(spring, "/representative") == []
+
+
+def test_vision_down_still_sends_result(monkeypatch):
+    calls = []
+
+    def fake(url, json, headers, timeout):
+        calls.append(url)
+        if "/representative" in url:
+            raise httpx.ConnectError("vision down")
+        return httpx.Response(200, request=httpx.Request("POST", url))
+    monkeypatch.setattr(httpx, "post", fake)
+    vision(34, 1, 0)
+    finalize(34)
+    assert any(u.endswith("/api/v1/events/34/result") for u in calls)
 
 
 # ---------- 인증 (후속 단계에서 켤 때) ----------

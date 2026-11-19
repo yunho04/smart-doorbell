@@ -15,6 +15,7 @@ from app.services.event_cache import EventData, event_cache
 from app.services.llm import llm
 from app.services.rag_store import case_store
 from app.services.spring_client import send_result
+from app.services.vision_client import send_representative
 
 log = logging.getLogger("ai-llm")
 
@@ -54,11 +55,19 @@ def build_features(data: EventData) -> EventFeatures:
 
 
 def select_best_frame(data: EventData) -> int | None:
-    """대표 프레임: Vision이 보낸 결과 중 사람 인식 신뢰도가 가장 높은 사진의 frame_no (명세서 6장)."""
-    def person_conf(v) -> float:
-        return max((o.confidence for o in v.objects if o.label == "person"), default=0.0)
+    """대표 사진: 사람 인식 신뢰도가 가장 높은 사진의 frame_no (명세서 6장).
 
-    candidates = [v for v in data.visions if v.person_detected] or data.visions
+    Vision은 이벤트당 최근 VISION_KEEP_FRAMES장만 보관하므로 그 안에서만 고른다 (오래된 번호는 404).
+    신뢰도가 같으면 더 최근 사진을 고른다.
+    """
+    def person_conf(v) -> tuple[float, int]:
+        return (max((o.confidence for o in v.objects if o.label == "person"), default=0.0), v.frame_no)
+
+    if not data.visions:
+        return None
+    newest = max(v.frame_no for v in data.visions)
+    recent = [v for v in data.visions if v.frame_no > newest - settings.VISION_KEEP_FRAMES]
+    candidates = [v for v in recent if v.person_detected] or recent
     return max(candidates, key=person_conf).frame_no if candidates else None
 
 
@@ -107,5 +116,8 @@ def finalize_event(event_id: int) -> bool:
     log.info("최종 분석 eventId=%s risk=%s (vision=%s, llm=%s) reason=%s 참조사례=%s 대표프레임=%s",
              event_id, result.risk_level.value, d.get("vision_level"), d.get("llm_level"),
              d["reason"], d["referenced_case_ids"], d["best_frame_no"])
-    # TODO: 대표 사진 업로드 (POST /api/v1/events/{id}/image) 담당은 팀에서 결정
-    return send_result(event_id, result)
+    sent = send_result(event_id, result)
+    # 대표 사진: LLM이 고른 frame_no를 Vision에 보내면 Vision이 Spring /image로 원본 업로드
+    if d["best_frame_no"] is not None:
+        send_representative(event_id, d["best_frame_no"])
+    return sent

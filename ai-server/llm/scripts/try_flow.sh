@@ -19,7 +19,7 @@ for F in 1 2; do
     $AI/vision/result; echo
   sleep 1
 done
-echo "== 2. Pi B -> AI 음성 (STT -> 대사 선택 -> Spring /response)"
+echo "== 2. Pi B -> AI 음성 (STT -> 대사 선택 -> 응답의 responseCode로 Pi B가 재생)"
 curl -s -F file=@"$TMP/$AUDIO.wav" $AI/api/v1/events/$EID/audio; echo
 echo "== 3. 보관 상태 확인";              curl -s $AI/api/v1/events/$EID/state; echo
 echo "== 4. Spring -> AI finalize";       curl -s -H 'Content-Type: application/json' -d "{\"eventId\":$EID}" $AI/api/v1/events/$EID/finalize; echo
