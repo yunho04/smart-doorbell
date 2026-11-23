@@ -120,7 +120,7 @@
 <section class="hero">
   <div class="legend" aria-hidden="true"><span class="ico live"></span><span class="ico LOW"></span><span class="ico MEDIUM"></span><span class="ico HIGH"></span></div>
   <h1>누가 왔는지, 얼마나 위험한지<br>한눈에 보고 직접 정하기</h1>
-  <p>방문마다 AI가 판단한 위험도를 보고, 내 판단으로 올리거나 규칙을 남기면 다음 방문부터 반영돼요.</p>
+  <p>방문마다 AI가 판단한 위험도를 보고, 그 판단이 맞았는지 평가하면 다음 판단에 참고돼요.</p>
 </section>
 
 <div id="alert"></div>
@@ -164,7 +164,8 @@ const store = {
   get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
-let user = store.get("doorbell.user", {});   // { [eventId]: { level, note } }
+let user = store.get("doorbell.acc", {});   // { [eventId]: { accuracy: HIGH|MEDIUM|LOW, saved } } — MVP v2 명세 3번 accuracyLevel
+const ACC = [["HIGH", "정확"], ["MEDIUM", "부분적으로 정확"], ["LOW", "부정확"]];
 let rules = store.get("doorbell.rules", ["헬멧 쓴 배달 기사는 정상", "마스크 쓰고 30초 넘게 있으면 상"]);
 let filter = "ALL";
 let selected = Number(location.hash.slice(1)) || 8;
@@ -177,7 +178,8 @@ const dur = e => {
   const s = Math.round((new Date(e.endedAt) - new Date(e.startedAt)) / 1000);
   return s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`;
 };
-const level = e => user[e.eventId]?.level || e.riskLevel;
+const level = e => e.riskLevel;
+const api = location.protocol.startsWith("http");  // Spring static/ 에서 열렸을 때만 서버 API 호출
 const labels = e => e.labels || [];  // Spring 응답엔 아직 없음
 const resps = e => e.responses || (e.responseText ? [{ responseText: e.responseText }] : []);  // 명세 v1.0은 responseText 한 칸
 const ico = e => e.status === "DETECTED" ? `<span class="ico live" aria-hidden="true"></span>`
@@ -216,8 +218,10 @@ function renderDetail() {
         ${labels(e).map(l => `<span class="pill">${esc(LABEL_KO[l] || l)}</span>`).join("")}
       </div>
     </div>
-    <div class="photo">${e.imageUrl ? `<img src="${esc(e.imageUrl)}" alt="대표 사진" style="max-width:100%;border-radius:10px">`
-      : e.status === "DETECTED" ? "방문이 끝나면 대표 사진이 올라와요" : "대표 사진 자리<br>Spring 이미지 조회 API 연결 전"}</div>
+    <div class="photo">${e.status === "DETECTED" ? "방문이 끝나면 대표 사진이 올라와요"
+      : e.imageUrl || api ? `<img src="${esc(e.imageUrl || `/api/v1/events/${e.eventId}/image`)}" alt="대표 사진"
+          style="max-width:100%;max-height:100%;border-radius:10px" onerror="this.replaceWith('대표 사진 없음')">`
+      : "대표 사진 자리<br>Spring에서 열면 /api/v1/events/{id}/image 로 보여요"}</div>
     <div class="h">요약</div>
     <p>${esc(e.summary ?? "방문자가 떠나고 10초 뒤 AI가 분석해요")}</p>
     <div class="h">스피커가 한 말</div>
@@ -227,19 +231,20 @@ function renderDetail() {
 function renderPanel() {
   const e = EVENTS.find(x => x.eventId === selected);
   const u = (e && user[e.eventId]) || {};
-  const judge = !e || e.status === "DETECTED" ? `<div class="box hint">방문이 끝나면 위험도를 고를 수 있어요</div>` : `
+  const judge = !e || e.status === "DETECTED" ? `<div class="box hint">방문이 끝나면 AI 판단을 평가할 수 있어요</div>` : `
     <div class="box">
       <div class="row" style="margin-bottom:10px"><span style="color:var(--muted)">AI 판단</span>${badge(e.riskLevel)}</div>
-      <div class="row"><span style="color:var(--muted)">내 판단</span>
-        <span class="seg" role="group" aria-label="내 판단">${["LOW", "MEDIUM", "HIGH"].map(l =>
-          `<button data-level="${l}" aria-pressed="${u.level === l}">${KO[l]}</button>`).join("")}</span></div>
+      <div class="row"><span style="color:var(--muted)">이 판단, 맞았나요?</span>
+        <span class="seg" role="group" aria-label="AI 판단 정확도">${ACC.map(([l, t]) =>
+          `<button data-acc="${l}" aria-pressed="${u.accuracy === l}" title="${t}">${KO[l]}</button>`).join("")}</span></div>
+      <p class="hint" style="margin-top:8px">상 = 정확 · 중 = 부분적으로 정확 · 하 = 부정확</p>
     </div>
-    <textarea id="note" maxlength="200" placeholder="왜 그렇게 봤는지 (예: 마스크 쓰고 계속 서성임)">${esc(u.note)}</textarea>
-    <div class="row"><p class="hint">다음 방문 판단부터 반영돼요</p><button class="btn dark sm" id="save">저장</button></div>`;
+    <p class="hint">${u.accuracy ? (u.saved ? "저장됨 · AI가 비슷한 방문을 판단할 때 참고해요" : "이 브라우저에만 저장됨 (Spring 연결 전)")
+      : "평가하면 AI가 비슷한 방문을 판단할 때 참고해요"}</p>`;
   $("#panel").innerHTML = `
-    <div class="bar">위험도 <span class="n">▾</span></div>
+    <div class="bar">AI 판단 평가 <span class="n">▾</span></div>
     ${judge}
-    <div class="bar" style="margin-top:6px">내 규칙 <span class="n">${rules.length}/10 ▾</span></div>
+    <div class="bar" style="margin-top:6px">내 규칙 <span class="n">${rules.length}/10 · 제안, 서버 미연결 ▾</span></div>
     <ul class="rules">${rules.map((r, i) => `<li><span class="ico rule" aria-hidden="true">R</span><span class="txt">${esc(r)}</span>
       <button class="x" data-del="${i}" aria-label="규칙 삭제">×</button></li>`).join("") || `<li class="hint">아직 규칙이 없어요</li>`}</ul>
     <div class="add"><input type="text" id="rule" maxlength="100" placeholder="예: 밤 10시 이후 방문은 한 단계 올려 줘" ${rules.length >= 10 ? "disabled" : ""}>
@@ -254,19 +259,26 @@ document.addEventListener("click", ev => {
   if (!t) return;
   if (t.dataset.f) { filter = t.dataset.f; renderList(); }
   else if (t.dataset.id) { selected = Number(t.dataset.id); location.hash = selected; render(); }
-  else if (t.dataset.level) {
-    const u = user[selected] || {};
-    u.level = u.level === t.dataset.level ? null : t.dataset.level;  // 다시 누르면 취소
-    user[selected] = u; store.set("doorbell.user", user); render();
-  } else if (t.id === "save") {
-    user[selected] = { ...(user[selected] || {}), note: $("#note").value.trim() };
-    store.set("doorbell.user", user); t.textContent = "저장됨";
+  else if (t.dataset.acc) {
+    user[selected] = { accuracy: t.dataset.acc, saved: false };
+    store.set("doorbell.acc", user); renderPanel(); sendFeedback(selected);
   } else if (t.id === "addRule") {
     const v = $("#rule").value.trim();
     if (v && rules.length < 10) { rules.push(v); store.set("doorbell.rules", rules); renderPanel(); }
   } else if (t.dataset.del) { rules.splice(Number(t.dataset.del), 1); store.set("doorbell.rules", rules); renderPanel(); }
 });
 document.addEventListener("keydown", ev => { if (ev.key === "Enter" && ev.target.id === "rule") $("#addRule").click(); });
+
+// AI 판단 정확도 → Spring (MVP v2 명세 3번: UI → Spring 저장 → LLM RAG). UI→Spring 주소는 명세에 없어 LLM 쪽과 같은 경로로 가정
+async function sendFeedback(id) {
+  if (!api) return;
+  try {
+    const r = await fetch(`/api/v1/events/${id}/feedback`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eventId: id, accuracyLevel: user[id].accuracy }) });
+    user[id].saved = r.ok; store.set("doorbell.acc", user);
+    if (id === selected) renderPanel();
+  } catch {}
+}
 
 // 3초마다 Spring 목록을 다시 불러온다. API가 없거나 실패하면 목업 그대로
 async function load() {
