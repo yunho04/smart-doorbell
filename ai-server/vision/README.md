@@ -63,9 +63,9 @@ Windows에서는 `localhost` 대신 **`127.0.0.1`**을 쓴다. `localhost`로 �
   - **칼 오탐 0/55** (우산·과자 봉지 든 사람, 흉기 없는 장면) → 칼 기준값 0.3 유지
   - **멀리 작게 찍힌 칼(CCTV 각도 합성 사진)은 1/12** → 칼은 카메라 가까이에서 크게 보여야 잡힌다. 시연은 1m 안에서
   - 우산을 야구방망이로 0.18~0.35 → 기준값 0.5에서 걸러짐 (기준값 맞음)
-  - **복면 오탐 1건**: 밤에 어두운 후드 쓴 뒷모습 0.68. 연속 2장이 되면 MEDIUM이 될 수 있다 (자료가 적어 기준값은 안 바꿈)
+  - 복면 1건: 밤에 어두운 후드 쓴 뒷모습 0.68 → MEDIUM이 될 수 있다. **밤에 후드로 얼굴이 안 보이는 것도 위험 신호로 보기로 함** (장준용 11-23) → 기준값 그대로
   - **마스크는 판단 불가**: 얼굴만 잘린 사진 15장은 "face mask" 포함 단어 6종 모두 0, 3배로 키워도 0. 장면 사진(11-16)에선 0.82 → 실제 카메라로 마스크 쓰고 확인해야 함
-  - 택배 상자: 쓸 만한 공개 데이터셋 없음, 아직 시험 안 함
+  - **택배 상자** (집 보안 카메라·배송 장면 데이터셋 19장 + 택배 없는 사진 64장): 기준값 0.4에서 **4/19**, 0.25에서 **7/19**(오탐 1/64) → **0.25로 내림**. "package"·"parcel" 단어는 0/19라 "cardboard box" 유지. 봉투·비닐 택배는 못 잡음. 시연에서 택배 방문이면 **종이 상자를 들고** 오기
 - 1초에 1장이라 장당 0.6초면 충분. 서버가 느리면 `VISION_MODEL=yoloe-26s-seg.pt`
 
 ## 1차 위험도 규칙 (`judge()`)
@@ -131,15 +131,17 @@ LLM 서버가 죽어 있어도 Vision은 계속 돌고, 실패는 로그에 남�
 
 ### 대표 사진 올리기 `POST /vision/events/{event_id}/representative`
 
-**대표 사진은 LLM(허인혜)이 고른다** (11-17 톡방, 11-18 확인). LLM이 finalize 뒤 고른 사진 번호를 보내면, Vision이 그 사진 원본을 Spring `POST /api/v1/events/{id}/image`(multipart 키 `file`)로 올린다 (11-18 체크리스트 15단계).
+**대표 사진은 LLM(허인혜)이 고른다** (11-17 톡방, 11-18 확인). LLM이 finalize 뒤 고른 사진 번호를 보내면, Vision이 그 사진 원본을 Spring **`POST /api/v1/events/{id}/representative-image`**(multipart 키 `file`, MVP v2 명세 4번)로 올린다. Spring이 아직 v1이라 404면 `/image`로 한 번 더 보낸다.
 
 ```json
-{"frame_no": 12}
+{"eventId": 27, "representativeFrameId": 42}
 ```
+MVP v2 명세 5번 형식. 11-18 형식 `{"frame_no": 42}`도 받는다. **frameId = Vision 결과의 `frame_no`**.
 
 | 코드 | 이유 |
 |---|---|
-| 200 | 업로드 성공. 본문 = Spring 응답 `{mediaId, eventId, mediaType, filePath}` + `frame_no` |
+| 200 | 업로드 성공. 본문 = Spring 응답(v2: `{eventId, mediaId, imageUrl, status:"SAVED"}`) + `frame_no` |
+| 400 | 사진 번호가 없거나, 본문 `eventId`가 주소의 id와 다름 |
 | 404 | 그 Event·번호의 사진이 없음 (Event당 최근 300장만 메모리에 둠, 사진이 10분 안 오면 Event 삭제) |
 | 502 | Spring 연결 실패 또는 Spring 에러 |
 | 503 | `SPRING_URL` 설정 안 됨 |

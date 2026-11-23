@@ -25,7 +25,7 @@ from ultralytics import YOLOE
 
 # 찾을 물체(글로 지정)와 라벨별 신뢰도 하한. 11-16 Wikimedia 사진 16장으로 잡은 값, 현관 카메라 사진으로 다시 조정
 CLASSES = {"person": 0.4, "helmet": 0.5, "face mask": 0.5, "balaclava": 0.35,
-           "cardboard box": 0.4, "knife": 0.3, "baseball bat": 0.5}
+           "cardboard box": 0.25, "knife": 0.3, "baseball bat": 0.5}  # 상자 0.4→0.25 (11-23 eval: 택배 4/19→7/19, 오탐 0→1/64)
 FACE_COVER = {"helmet", "face mask", "balaclava"}
 WEAPONS = {"knife", "baseball bat"}
 MIN_FRAMES = 2  # 라벨이 **연속** 이 장수 이상 나와야 Event 에 반영. 11-18 event 8: 칼이 없었는데 94장 중 띄엄띄엄 오탐이 쌓여 HIGH
@@ -194,17 +194,25 @@ def latest(request: Request):
 
 
 @app.post("/vision/events/{event_id}/representative")
-def representative(event_id: int, frame_no: int = Body(..., embed=True), authorization: str | None = Header(None)):
-    """LLM 이 finalize 뒤 고른 frame_no 사진 1장을 Spring POST /api/v1/events/{id}/image (multipart 키 file) 로 올린다."""
+def representative(event_id: int, body: dict = Body(...), authorization: str | None = Header(None)):
+    """LLM 이 finalize 뒤 고른 사진 1장을 Spring 대표 사진으로 올린다 (multipart 키 file).
+    본문: MVP v2 명세 5번 {"eventId", "representativeFrameId"} 또는 11-18 형식 {"frame_no"}. frameId = 결과의 frame_no."""
     check_token(authorization)
+    frame_no = body.get("representativeFrameId", body.get("frame_no"))
+    if not isinstance(frame_no, int) or body.get("eventId", event_id) != event_id:
+        raise HTTPException(400, "need representativeFrameId (int) and matching eventId")
     jpeg = events.get(event_id, {}).get("jpeg", {}).get(frame_no)
     if jpeg is None:
         raise HTTPException(404, "no such frame")
     if not SPRING_URL:
         raise HTTPException(503, "SPRING_URL not set")
-    t0, url = time.perf_counter(), f"{SPRING_URL.rstrip('/')}/api/v1/events/{event_id}/image"
+    t0, files = time.perf_counter(), {"file": (f"event{event_id}_frame{frame_no}.jpg", jpeg, "image/jpeg")}
     try:
-        r = requests.post(url, files={"file": (f"event{event_id}_frame{frame_no}.jpg", jpeg, "image/jpeg")}, timeout=5)
+        # MVP v2 명세 4번 주소. Spring 이 아직 v1(/image)이면 404 → v1 주소로 한 번 더 (전환 기간용)
+        for path in ("representative-image", "image"):
+            r = requests.post(f"{SPRING_URL.rstrip('/')}/api/v1/events/{event_id}/{path}", files=files, timeout=5)
+            if r.status_code != 404:
+                break
     except requests.RequestException as ex:
         log_json(event_id, "vision_to_spring_image", round((time.perf_counter() - t0) * 1000), None, type(ex).__name__)
         raise HTTPException(502, f"spring unreachable: {type(ex).__name__}")

@@ -34,8 +34,12 @@ HF_SETS = {
     "umbrella_cctv": ("Simuletic/CCTV_Weapon_Detection_Rifles_vs_Umbrellas", "umbrella", None),  # 라벨에 weapon 없는 사진만
     "mask_on": ("HuangYiYang/Face-Mask-Detection-Dataset", 0, "face mask"),  # MIT, label 0 = with_mask
     "mask_off": ("HuangYiYang/Face-Mask-Detection-Dataset", 1, None),
+    # 집 보안 카메라·배송 장면 (Open Images·COCO 등 모음). YOLO 라벨 5 = parcel, 0 = person
+    "parcel": ("OliseNS/person-face-package-home-security-detection", ("yolo", 5, True), "cardboard box"),
+    "person_no_parcel": ("OliseNS/person-face-package-home-security-detection", ("yolo", 5, False), None),
 }
-HF_N = {"cctv_knife": 12, "chips": 12, "umbrella_cctv": 10, "mask_on": 15, "mask_off": 15}
+HF_N = {"cctv_knife": 12, "chips": 12, "umbrella_cctv": 10, "mask_on": 15, "mask_off": 15, "parcel": 20,
+        "person_no_parcel": 15}
 
 
 def get(url, wait=5):
@@ -131,11 +135,16 @@ def fetch_set(folder, ds, pick, n, save, rows):
     for path in sorted(f["path"] for f in files if f["type"] == "file" and "/images/" in f["path"]):
         if got >= n:
             break
-        if pick == "umbrella":  # 라벨 파일에 weapon(1)이 없어야 우산 사진
+        if pick == "umbrella" or isinstance(pick, tuple):  # YOLO 라벨 파일을 보고 고름
             label = get(f"https://huggingface.co/datasets/{ds}/resolve/main/"
                         + path.replace("/images/", "/labels/").rsplit(".", 1)[0] + ".txt").decode()
-            if any(line.split()[0] == "1" for line in label.splitlines() if line.strip()):
+            classes = {line.split()[0] for line in label.splitlines() if line.strip()}
+            if pick == "umbrella" and "1" in classes:  # weapon(1)이 없어야 우산 사진
                 continue
+            if isinstance(pick, tuple):  # ("yolo", 클래스, 있어야 함?) — 없어야 할 때는 사람(0)은 있어야 함
+                _, cls, present = pick
+                if (str(cls) in classes) != present or (not present and "0" not in classes):
+                    continue
         elif not path.startswith(pick):
             continue
         save(folder, got, f"https://huggingface.co/datasets/{ds}/resolve/main/{path}")

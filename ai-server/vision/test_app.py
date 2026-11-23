@@ -57,18 +57,30 @@ def test_sends_every_frame_to_llm():
 
 
 def test_representative_upload():
-    calls = []
+    calls, v1_only = [], []  # v1_only 에 값이 있으면 가짜 Spring 이 v2 주소에 404 (전환 전)
+
+    def fake_post(url, files, timeout):
+        calls.append((url, files))
+        missing = v1_only and url.endswith("representative-image")
+        return SimpleNamespace(ok=not missing, status_code=404 if missing else 201, text="",
+                               json=lambda: {"mediaId": 1, "eventId": 303, "status": "SAVED"})
+
     real = m.requests.post
-    m.requests.post = lambda url, files, timeout: calls.append((url, files)) or SimpleNamespace(
-        ok=True, status_code=201, text="", json=lambda: {"mediaId": 1, "eventId": 303})
+    m.requests.post = fake_post
     m.SPRING_URL = "http://spring.test"
     try:
         post(303), post(303)
-        r = client.post("/vision/events/303/representative", json={"frame_no": 2})
+        r = client.post("/vision/events/303/representative", json={"eventId": 303, "representativeFrameId": 2})  # v2 명세
         assert r.status_code == 200 and r.json()["mediaId"] == 1 and r.json()["frame_no"] == 2
-        assert calls[0][0] == "http://spring.test/api/v1/events/303/image"
+        assert calls[0][0] == "http://spring.test/api/v1/events/303/representative-image"
         assert calls[0][1]["file"][1] == BUS.read_bytes()  # 키 file, 그 사진 원본 그대로
+        assert client.post("/vision/events/303/representative", json={"frame_no": 1}).status_code == 200  # 11-18 형식
+        v1_only.append(1)
+        calls.clear()
+        assert client.post("/vision/events/303/representative", json={"frame_no": 1}).status_code == 200
+        assert [u.rsplit("/", 1)[1] for u, _ in calls] == ["representative-image", "image"]  # v1 Spring 으로 넘어감
         assert client.post("/vision/events/303/representative", json={"frame_no": 99}).status_code == 404
+        assert client.post("/vision/events/303/representative", json={"eventId": 1, "representativeFrameId": 1}).status_code == 400
     finally:
         m.requests.post, m.SPRING_URL = real, None
 
