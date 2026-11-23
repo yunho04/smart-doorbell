@@ -1,0 +1,7 @@
+node_modules
+dist
+*.local
+*.log
+
+# 루트 .gitignore가 .env.* 를 모두 무시하므로 예시 파일만 다시 포함한다.
+!.env.example
