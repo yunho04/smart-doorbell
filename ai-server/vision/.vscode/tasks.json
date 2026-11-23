@@ -1,0 +1,23 @@
+{
+  // Ctrl+Shift+B = Vision 서버 실행. IP는 11-18 현장(SSU_INFO_WI-FI) 값, 바뀌면 여기만 고친다
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Vision 서버",
+      "type": "process",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "LLM_URL": "http://10.21.30.230:8001/vision/result",
+          "SPRING_URL": "http://10.21.33.82:8080",
+          "SAVE_DIR": "captures"
+        }
+      },
+      "group": { "kind": "build", "isDefault": true },
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}
