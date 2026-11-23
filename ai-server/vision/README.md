@@ -57,12 +57,20 @@ Windows에서는 `localhost` 대신 **`127.0.0.1`**을 쓴다. `localhost`로 �
 | **YOLOE-26m (채택)** | **0.6초** | **3/3 (0.81~0.93)** | **0.82** | **1/2** | **0.78** | 못 찾음 |
 
 - 턱에 걸친 마스크는 0.21~0.23으로 낮게 나와 기준값 0.5에서 걸러진다 (가린 게 아니니 맞는 동작)
-- **칼은 세 모델 모두 못 찾았다.** 흉기 판단은 Vision만 믿지 말고 충격 센서·LLM 2차 판단으로 보완
+- **칼은 세 모델 모두 못 찾았다** (11-16, 칼 사진 1장). 흉기 판단은 Vision만 믿지 말고 충격 센서·LLM 2차 판단으로 보완
+- **11-23 커먼즈 공개 사진으로 다시 잼** (`python eval.py`, 학습 아님): 칼이 잘 보이는 사진 **7/9** 검출 (기준값 0.3). 놓친 것: 얼굴 앞에 칼 두 자루 든 사람, 레몬 써는 작은 칼. 0.5로 올리면 2장(0.50·0.51) 더 놓쳐서 **0.3 유지**. 프롬프트에 "kitchen knife·blade·machete"를 더해도 놓친 사진은 못 잡고 오탐(machete 0.21)만 생겨 안 넣음. 흉기 없는 사진 3장에서 칼 오탐 0 (표본이 적어 결론 아님). 마스크·헬멧 사진은 위키미디어 요청 제한(429)으로 못 받음
+- **11-23 Hugging Face 공개 데이터셋 추가** (총 79장, 출처 `eval/manifest*.csv`, `python eval.py fetch-hf`):
+  - **칼 오탐 0/55** (우산·과자 봉지 든 사람, 흉기 없는 장면) → 칼 기준값 0.3 유지
+  - **멀리 작게 찍힌 칼(CCTV 각도 합성 사진)은 1/12** → 칼은 카메라 가까이에서 크게 보여야 잡힌다. 시연은 1m 안에서
+  - 우산을 야구방망이로 0.18~0.35 → 기준값 0.5에서 걸러짐 (기준값 맞음)
+  - **복면 오탐 1건**: 밤에 어두운 후드 쓴 뒷모습 0.68. 연속 2장이 되면 MEDIUM이 될 수 있다 (자료가 적어 기준값은 안 바꿈)
+  - **마스크는 판단 불가**: 얼굴만 잘린 사진 15장은 "face mask" 포함 단어 6종 모두 0, 3배로 키워도 0. 장면 사진(11-16)에선 0.82 → 실제 카메라로 마스크 쓰고 확인해야 함
+  - 택배 상자: 쓸 만한 공개 데이터셋 없음, 아직 시험 안 함
 - 1초에 1장이라 장당 0.6초면 충분. 서버가 느리면 `VISION_MODEL=yoloe-26s-seg.pt`
 
 ## 1차 위험도 규칙 (`judge()`)
 
-라벨은 한 Event에서 **2장 이상** 나와야 인정한다 (한 장짜리 오탐 거르기).
+라벨은 한 Event에서 **연속 2장** 나와야 인정한다 (인정되면 그 Event 동안 유지). 11-23 변경: 전에는 "아무 2장"이라, 11-18 event 8(칼 없음, 사진 94장)에서 띄엄띄엄 나온 칼 오탐이 쌓여 HIGH가 됐다. LLM 서버는 최종 위험도를 max(Vision, LLM)로 정하므로 Vision 오탐은 뒤에서 못 고친다.
 
 | 위험도 | 조건 |
 |---|---|
@@ -113,7 +121,7 @@ curl -F event_id=101 -F image=@visitor.jpg http://localhost:8000/vision/analyze
 | `captured_at` | 이번 사진 | Vision이 사진을 받은 시각 (STT와 시간 순서 맞추기용) |
 | `person_detected`, `person_count`, `objects`, `processing_ms` | 이번 사진 | ERD `VISION_RESULTS` 컬럼 이름 그대로. `bbox`는 `[x1, y1, x2, y2]` 픽셀 |
 | `person_visible_sec` | Event | 사람이 처음 보인 때부터 마지막으로 보인 때까지 초 |
-| `package_detected`, `face_covered`, `weapon_labels` | Event | 2장 이상에서 확인된 것만 |
+| `package_detected`, `face_covered`, `weapon_labels` | Event | 연속 2장에서 확인된 것만 |
 | `vision_risk_level`, `vision_reasons` | Event | 1차 위험도 `LOW`/`MEDIUM`/`HIGH`(ERD `final_risk_level`과 같은 값)와 한국어 근거 |
 
 ### LLM으로 보내는 때
@@ -154,6 +162,8 @@ LLM 서버가 죽어 있어도 Vision은 계속 돌고, 실패는 로그에 남�
 | `SAVE_DIR` | 없음 | 설정하면 사진을 `SAVE_DIR/event{id}_{첫 사진 시각}/frame0001.jpg`로 저장 (테스트용). 방문자 사진이라 기본은 저장 안 함 (SAD 6장). 레포에 올리지 말 것 |
 
 확인용 페이지: 서버 PC 브라우저에서 `http://127.0.0.1:8000/vision/latest` — 마지막 사진·위험도·근거를 1초마다 새로고침 (localhost에서만 열림).
+
+**현장 점검** (통합 테스트·시연 전): `python check.py` → 내 IP(Pi A 설정과 같아야 함), Vision 서버 켜짐 여부, LLM·Spring 연결을 한 번에 보여 준다. 주소는 `.vscode/tasks.json`(VS Code `Ctrl+Shift+B` 실행 설정)에서 읽으니 IP가 바뀌면 거기만 고친다. 서버 상태는 `GET /health`.
 | `VISION_MODEL` | `yoloe-26m-seg.pt` | 느리면 `yoloe-26s-seg.pt` |
 | `VISION_API_TOKEN` | 없음 | 설정하면 Bearer 토큰 검사. 비우면 검사 안 함 (로컬 연동 테스트용) |
 

@@ -1,4 +1,5 @@
 captures/
+eval/
 __pycache__/
 *.pt
 *.ts

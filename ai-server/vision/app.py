@@ -28,7 +28,7 @@ CLASSES = {"person": 0.4, "helmet": 0.5, "face mask": 0.5, "balaclava": 0.35,
            "cardboard box": 0.4, "knife": 0.3, "baseball bat": 0.5}
 FACE_COVER = {"helmet", "face mask", "balaclava"}
 WEAPONS = {"knife", "baseball bat"}
-MIN_FRAMES = 2  # 라벨이 이 장수 이상 나와야 Event 에 반영 (한 장짜리 오탐 거르기)
+MIN_FRAMES = 2  # 라벨이 **연속** 이 장수 이상 나와야 Event 에 반영. 11-18 event 8: 칼이 없었는데 94장 중 띄엄띄엄 오탐이 쌓여 HIGH
 LOITER_SEC = 30  # 사람이 이 시간 넘게 보이면 배회
 EVENT_TTL = 600  # 이 시간 동안 사진이 안 오면 Event 상태 삭제
 KEEP_FRAMES = 300  # Event 당 메모리에 남길 사진 수 (대표 사진 업로드용, 1초 1장이면 최근 5분)
@@ -71,6 +71,13 @@ def judge(seen: set[str], visible_sec: int) -> tuple[str, list[str]]:
         reasons.append("택배 상자 보임")
     level = "HIGH" if weapons or (covers and loiter) else "MEDIUM" if covers or loiter else "LOW"
     return level, reasons
+
+
+def confirm(e: dict, labels: set[str]) -> set[str]:
+    """이번 사진 라벨로 연속 장수를 세고, 연속 MIN_FRAMES 장이 된 라벨을 이 Event 에서 '있다'로 인정한다 (인정되면 유지)."""
+    e["streak"] = Counter({k: e["streak"][k] + 1 for k in labels})  # 이번 사진에 없는 라벨은 0부터 다시
+    e["seen"] |= {k for k, n in e["streak"].items() if n >= MIN_FRAMES}
+    return e["seen"]
 
 
 def check_token(authorization: str | None):
@@ -119,8 +126,8 @@ async def analyze(
     now = time.time()
     for k in [k for k, e in events.items() if now - e["updated"] > EVENT_TTL]:
         del events[k]
-    e = events.setdefault(event_id, {"frames": 0, "counts": Counter(), "first": None, "last": None, "jpeg": {},
-                                     "dir": None})
+    e = events.setdefault(event_id, {"frames": 0, "streak": Counter(), "seen": set(), "first": None, "last": None,
+                                     "jpeg": {}, "dir": None})
     e["frames"] += 1
     e["updated"] = now
     if SAVE_DIR:  # 폴더 이름 = eventId + 첫 사진 받은 시각, 파일 이름 = frame_no
@@ -131,12 +138,11 @@ async def analyze(
     e["jpeg"][e["frames"]] = data  # ponytail: 메모리 보관. Event 당 KEEP_FRAMES 장 넘으면 오래된 것부터 버림
     if len(e["jpeg"]) > KEEP_FRAMES:
         e["jpeg"].pop(next(iter(e["jpeg"])))
-    e["counts"].update({o["label"] for o in objects})
+    seen = confirm(e, {o["label"] for o in objects})
     if persons:
         e["first"] = e["first"] or now
         e["last"] = now
     visible_sec = round(e["last"] - e["first"]) if e["first"] else 0
-    seen = {k for k, n in e["counts"].items() if n >= MIN_FRAMES}
     level, reasons = judge(seen, visible_sec)
 
     result = {
@@ -162,6 +168,13 @@ async def analyze(
     if LLM_URL:  # 11-17 톡방: 매초 보냄
         background.add_task(send_to_llm, result)
     return result
+
+
+@app.get("/health")
+def health():
+    """현장 점검용: 서버가 켜져 있고 어디로 보내도록 설정됐는지."""
+    return {"status": "ok", "model": MODEL, "llm_url": LLM_URL, "spring_url": SPRING_URL,
+            "save_dir": SAVE_DIR, "events_in_memory": len(events)}
 
 
 @app.get("/vision/latest", response_class=HTMLResponse)

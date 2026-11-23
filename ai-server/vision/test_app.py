@@ -33,6 +33,17 @@ def test_judge_rules():
     assert m.judge({"person", "cardboard box"}, 40)[0] == "LOW"  # 택배 기사는 오래 있어도 배회 아님
 
 
+def test_label_needs_consecutive_frames():
+    e = {"streak": m.Counter(), "seen": set()}
+    for labels in [{"knife"}, set(), {"knife"}, set(), {"knife"}]:  # 칼이 띄엄띄엄 3장: 오탐으로 봄 (event 8)
+        m.confirm(e, labels | {"person"})
+    assert "knife" not in e["seen"] and "person" in e["seen"]
+    m.confirm(e, {"person", "knife"})  # 바로 앞 사진에도 칼 → 연속 2장
+    assert "knife" in e["seen"]
+    m.confirm(e, {"person"})
+    assert "knife" in e["seen"]  # 한 번 인정되면 유지
+
+
 def test_sends_every_frame_to_llm():
     sent = []
     m.LLM_URL, real = "http://llm.test", m.send_to_llm
@@ -92,7 +103,7 @@ def test_token():
 
 
 if __name__ == "__main__":
-    for t in (test_person_detected, test_judge_rules, test_sends_every_frame_to_llm, test_representative_upload,
+    for t in (test_person_detected, test_judge_rules, test_label_needs_consecutive_frames, test_sends_every_frame_to_llm, test_representative_upload,
               test_saves_frames_per_event_folder, test_latest_page_is_localhost_only, test_rejects_non_image,
               test_token):
         t()
