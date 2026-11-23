@@ -59,6 +59,10 @@ public class MediaFile {
         return filePath;
     }
 
+    public void replaceFile(String filePath) {
+        this.filePath = filePath;
+    }
+
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }

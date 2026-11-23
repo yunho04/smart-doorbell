@@ -32,4 +32,13 @@ public class LlmClient {
                 .retrieve()
                 .toBodilessEntity();
     }
+
+    public void sendFeedback(LlmFeedbackRequest request) {
+        restClient.post()
+                .uri("/api/v1/events/{eventId}/feedback", request.eventId())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(request)
+                .retrieve()
+                .toBodilessEntity();
+    }
 }

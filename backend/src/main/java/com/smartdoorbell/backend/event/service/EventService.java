@@ -2,11 +2,12 @@ package com.smartdoorbell.backend.event.service;
 
 import com.smartdoorbell.backend.device.entity.Device;
 import com.smartdoorbell.backend.device.repository.DeviceRepository;
+import com.smartdoorbell.backend.event.EventNotFoundException;
 import com.smartdoorbell.backend.event.entity.Event;
 import com.smartdoorbell.backend.event.repository.EventRepository;
 import com.smartdoorbell.backend.eventresponse.entity.EventResponseHistory;
 import com.smartdoorbell.backend.eventresponse.repository.EventResponseHistoryRepository;
-import com.smartdoorbell.backend.mqtt.dto.MqttEventCreatedMessage;
+import com.smartdoorbell.backend.mqtt.dto.MqttEventMessage;
 import com.smartdoorbell.backend.mqtt.dto.MqttResponseMessage;
 import com.smartdoorbell.backend.mqtt.service.MqttPublisher;
 import org.springframework.stereotype.Service;
@@ -68,7 +69,7 @@ public class EventService {
         Event event = eventRepository.save(new Event(device));
         mqttPublisher.publishAfterCommit(
                 "doorbell/" + deviceId + "/event",
-                new MqttEventCreatedMessage(event.getId(), "CREATED")
+                new MqttEventMessage(event.getId(), "CREATED")
         );
     }
 
@@ -94,6 +95,10 @@ public class EventService {
         }
 
         event.startAnalysis(now);
+        mqttPublisher.publishAfterCommit(
+                "doorbell/" + event.getDevice().getId() + "/event",
+                new MqttEventMessage(eventId, "ENDED")
+        );
         return true;
     }
 
@@ -102,9 +107,7 @@ public class EventService {
     public Event getEvent(Long eventId) {
 
         return eventRepository.findById(eventId)
-                .orElseThrow(() ->
-                        new IllegalArgumentException("Event not found: " + eventId)
-                );
+                .orElseThrow(() -> new EventNotFoundException(eventId));
     }
 
     // 3. LLM 최종 결과 저장
@@ -117,9 +120,7 @@ public class EventService {
     ) {
 
         Event event = eventRepository.findLockedById(eventId)
-                .orElseThrow(() ->
-                        new IllegalArgumentException("Event not found: " + eventId)
-                );
+                .orElseThrow(() -> new EventNotFoundException(eventId));
 
         event.complete(
                 riskLevel,
@@ -137,9 +138,7 @@ public class EventService {
             String responseText
     ) {
         Event event = eventRepository.findById(eventId)
-                .orElseThrow(() ->
-                        new IllegalArgumentException("Event not found: " + eventId)
-                );
+                .orElseThrow(() -> new EventNotFoundException(eventId));
 
         EventResponseHistory response =
                 new EventResponseHistory(

@@ -13,11 +13,16 @@ import java.util.Optional;
 
 public interface EventRepository extends JpaRepository<Event, Long> {
 
+    List<Event> findAllByOrderByStartedAtDescIdDesc();
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<Event> findFirstByDeviceIdAndStatusOrderByStartedAtDescIdDesc(Long deviceId, String status);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<Event> findLockedById(Long id);
+
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    Optional<Event> findSharedById(Long id);
 
     @Query("""
             select e.id from Event e
