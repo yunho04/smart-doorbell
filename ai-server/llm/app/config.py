@@ -13,11 +13,24 @@ def _list(name: str) -> list[str]:
 
 
 class Settings:
-    # 각 기능을 실제 구현으로 바꿀 때 mock -> 실제 이름으로 변경
-    STT_BACKEND: str = os.getenv("STT_BACKEND", "mock")        # mock | whisper
-    LLM_BACKEND: str = os.getenv("LLM_BACKEND", "mock")        # mock | openai | anthropic | gemini
-    LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "mock-llm")
+    # ---------- STT·LLM 백엔드 ----------
+    # groq: Groq API 사용 (GROQ_API_KEY 필요) / mock: 규칙 기반 가짜 응답 (키 없이 흐름 테스트)
+    STT_BACKEND: str = os.getenv("STT_BACKEND", "mock")        # mock | groq
+    LLM_BACKEND: str = os.getenv("LLM_BACKEND", "mock")        # mock | groq
+
+    # Groq (OpenAI 호환 API). 키는 .env에만 넣고 GitHub에 올리지 않는다.
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GROQ_BASE_URL: str = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+
+    # 최종 위험도 판단·요약 (finalize 때 1회) / 방문 목적 분류 (음성마다, 빨라야 함)
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
+    LLM_FAST_MODEL: str = os.getenv("LLM_FAST_MODEL", "openai/gpt-oss-20b")
+    LLM_REASONING_EFFORT: str = os.getenv("LLM_REASONING_EFFORT", "low")   # gpt-oss 전용: low | medium | high
+    LLM_TIMEOUT_SEC: float = float(os.getenv("LLM_TIMEOUT_SEC", "10"))
+
+    STT_MODEL: str = os.getenv("STT_MODEL", "whisper-large-v3-turbo")      # 정확도가 아쉬우면 whisper-large-v3
+    STT_LANGUAGE: str = os.getenv("STT_LANGUAGE", "ko")
+    STT_TIMEOUT_SEC: float = float(os.getenv("STT_TIMEOUT_SEC", "10"))
 
     # Spring 주소 (통합 당일에는 Mac의 실제 LAN IP 사용, localhost 금지)
     SPRING_BASE_URL: str = os.getenv("SPRING_BASE_URL", "http://localhost:8080").rstrip("/")

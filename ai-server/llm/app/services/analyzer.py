@@ -86,22 +86,23 @@ def analyze(event_id: int) -> tuple[SpringResultRequest, dict]:
     features = build_features(data)
     transcripts = [x.transcript for x in data.voices]
 
-    # 1) Retrieval: 유사 사례 검색  2) Generation: LLM 2차 판단
-    examples = case_store.search(features, k=settings.RAG_TOP_K)
-    llm_level, reason, _conf = llm.assess_risk(features, transcripts, examples)
-
-    # 3) Vision 1차 위험도보다 낮출 수 없음
-    final_level = max_level(llm_level, features.vision_risk_level)
     reasons_v = vision_reasons(data)
+
+    # 1) Retrieval: 유사 사례 검색  2) Generation: LLM 위험도 판단 + 요약 (한 번의 호출)
+    examples = case_store.search(features, k=settings.RAG_TOP_K)
+    out = llm.analyze_event(features, transcripts, examples, reasons_v)
+    llm_level, reason, summary = out["risk_level"], out["reason"], out["summary"]
+
+    # 3) Vision 1차 위험도보다 낮출 수 없음 (LLM이 규칙을 어겨도 코드에서 한 번 더 막음)
+    final_level = max_level(llm_level, features.vision_risk_level)
     if reasons_v:
         reason = f"Vision: {', '.join(reasons_v)} / LLM: {reason}"
-
-    summary = llm.summarize(features, transcripts, final_level, reasons_v)
     last = data.voices[-1] if data.voices else None
     detail = {
         "reason": reason,
         "vision_level": features.vision_risk_level.value if features.vision_risk_level else None,
         "llm_level": llm_level.value,
+        "model": out.get("model_name"),
         "referenced_case_ids": [c["case_id"] for c in examples],
         "best_frame_no": select_best_frame(data),
     }
@@ -113,8 +114,8 @@ def analyze(event_id: int) -> tuple[SpringResultRequest, dict]:
 def finalize_event(event_id: int) -> bool:
     """finalize 백그라운드 작업: 분석 후 Spring /result 전송."""
     result, d = analyze(event_id)
-    log.info("최종 분석 eventId=%s risk=%s (vision=%s, llm=%s) reason=%s 참조사례=%s 대표프레임=%s",
-             event_id, result.risk_level.value, d.get("vision_level"), d.get("llm_level"),
+    log.info("최종 분석 eventId=%s risk=%s (vision=%s, llm=%s, model=%s) reason=%s 참조사례=%s 대표프레임=%s",
+             event_id, result.risk_level.value, d.get("vision_level"), d.get("llm_level"), d.get("model"),
              d["reason"], d["referenced_case_ids"], d["best_frame_no"])
     sent = send_result(event_id, result)
     # 대표 사진: LLM이 고른 frame_no를 Vision에 보내면 Vision이 Spring /image로 원본 업로드

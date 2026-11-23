@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # 방문 이벤트 1건을 명세서 순서대로 흉내 낸다.
 # 먼저 LLM 서버(8001)와 가짜 Spring(8080)을 띄워 둘 것.
-#   사용: ./scripts/try_flow.sh <eventId> <음성종류>
-#   음성종류: delivery | visit | repair | suspicious | noise
+#   사용: ./scripts/try_flow.sh <eventId> <음성종류> [실제 녹음 파일]
+#   음성종류: delivery | visit | repair | suspicious | noise  (Vision 가짜 결과의 택배 여부에만 사용)
+#   Groq STT를 쓸 때는 실제 녹음 파일(m4a/mp3/wav)을 3번째로 넣어야 내용이 인식된다
 set -e
 AI=${AI_BASE_URL:-http://127.0.0.1:8001}
 EID=${1:-15}
 AUDIO=${2:-delivery}
 PKG=$([ "$AUDIO" = delivery ] && echo true || echo false)
-TMP=$(mktemp -d); printf 'fake' > "$TMP/$AUDIO.wav"
+if [ -n "$3" ]; then AUDIO_FILE="$3"
+else TMP=$(mktemp -d); printf 'fake' > "$TMP/$AUDIO.wav"; AUDIO_FILE="$TMP/$AUDIO.wav"; fi
 
 echo "== 0. AI 서버 상태";                curl -s $AI/health; echo
 echo "== 1. Vision -> LLM (Vision 담당 코드와 같은 형식, 바뀔 때만 전송)"
@@ -20,7 +22,7 @@ for F in 1 2; do
   sleep 1
 done
 echo "== 2. Pi B -> AI 음성 (STT -> 대사 선택 -> 응답의 responseCode로 Pi B가 재생)"
-curl -s -F file=@"$TMP/$AUDIO.wav" $AI/api/v1/events/$EID/audio; echo
+curl -s -F file=@"$AUDIO_FILE" $AI/api/v1/events/$EID/audio; echo
 echo "== 3. 보관 상태 확인";              curl -s $AI/api/v1/events/$EID/state; echo
 echo "== 4. Spring -> AI finalize";       curl -s -H 'Content-Type: application/json' -d "{\"eventId\":$EID}" $AI/api/v1/events/$EID/finalize; echo
 echo "   (AI가 분석 후 Spring /result로 전송 -> 가짜 Spring 터미널 확인)"

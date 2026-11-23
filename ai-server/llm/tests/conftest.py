@@ -19,3 +19,7 @@ os.environ["INTERNAL_TOKEN"] = ""
 os.environ["SPRING_BASE_URL"] = "http://spring.test:8080"
 os.environ["VISION_BASE_URL"] = "http://vision.test:8000"
 os.environ["SEND_RESPONSE_TO_SPRING"] = "false"
+# 테스트는 항상 Mock으로 (실제 Groq 호출·과금 방지). Groq 코드는 test_groq.py에서 가짜 클라이언트로 검사
+os.environ["STT_BACKEND"] = "mock"
+os.environ["LLM_BACKEND"] = "mock"
+os.environ["GROQ_API_KEY"] = ""

@@ -6,7 +6,7 @@ python-dotenv
 httpx
 pytest
 
-# 실제 구현 단계에서 추가
-# faster-whisper
+openai>=1.40     # Groq API (OpenAI 호환) 접속용
+
+# 후속 단계 (RAG 임베딩)
 # numpy
-# openai        # 또는 anthropic / google-genai

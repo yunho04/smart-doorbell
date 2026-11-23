@@ -12,7 +12,9 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.routers import events, feedback, vision
+from app.services.llm import llm
 from app.services.rag_store import case_store
+from app.services.stt import stt
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("ai-llm")
@@ -28,8 +30,8 @@ app.include_router(feedback.router)
 def health():
     return {
         "status": "ok",
-        "stt_backend": settings.STT_BACKEND,
-        "llm_backend": settings.LLM_BACKEND,
+        "stt": stt.name,
+        "llm": llm.model_name,
         "rag_cases": len(case_store),
         "spring_base_url": settings.SPRING_BASE_URL,
     }

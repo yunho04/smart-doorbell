@@ -25,6 +25,29 @@ cp .env.example .env               # SPRING_BASE_URL을 Mac의 실제 LAN IP로 
   - Pi B 담당에게 → 음성 업로드 주소 `http://<AI_IP>:8001/api/v1/events/{eventId}/audio` (응답의 `responseCode`로 바로 재생)
   - 내 `.env`에 → `SPRING_BASE_URL=http://<Spring IP>:8080`, `VISION_BASE_URL=http://<Vision IP>:8000`
 
+## Groq 연결 (STT·LLM)
+
+STT와 LLM 모두 Groq API를 쓴다 (OpenAI 호환, `openai` 라이브러리로 접속).
+
+| 용도 | 모델 (`.env`) | 호출 시점 |
+|---|---|---|
+| STT | `STT_MODEL=whisper-large-v3-turbo` (`language=ko`) | 음성마다 |
+| 방문 목적 분류 | `LLM_FAST_MODEL=openai/gpt-oss-20b` | 음성마다 (빨라야 함) |
+| 최종 위험도 + 요약 | `LLM_MODEL=openai/gpt-oss-120b` | finalize 때 1회 (한 번의 호출로 둘 다) |
+
+1. `.env`의 `GROQ_API_KEY=`에 키를 넣는다 (GitHub·채팅에 올리지 않기)
+2. `pip install -r requirements.txt` (openai 추가됨)
+3. `python scripts/check_groq.py` → 방문 목적·위험도·요약이 실제 모델로 나오는지 확인 (`python scripts/check_groq.py 녹음.m4a`로 STT도 확인)
+4. 서버 재시작 후 `/health`에서 `"llm": "groq/openai/gpt-oss-120b"`, `"stt": "groq/whisper-large-v3-turbo"` 확인
+
+**안전장치**
+- 키가 비어 있으면 자동으로 Mock으로 동작한다 (서버는 항상 켜짐).
+- Groq 호출 실패·시간 초과·형식 오류 → 규칙 기반 판단으로 대체 (로그에 `model=fallback-rule`), Event가 멈추지 않는다.
+- 방문자 발화는 `<visitor_transcript>` 안의 데이터로만 전달하고, 태그를 닫는 꺾쇠는 바꿔서 지시를 끼워 넣지 못하게 한다.
+- 출력은 JSON으로 받아 정해진 값(목적·위험도)만 인정하고, 최종 위험도는 코드에서 max(Vision 1차, LLM)로 한 번 더 막는다.
+- Whisper가 무음에서 지어내는 문장("시청해 주셔서 감사합니다" 등)은 버리고 '알아듣지 못함'으로 처리한다.
+- 테스트(`pytest`)는 항상 Mock으로 돌아 실제 API를 호출하지 않는다.
+
 ## 전체 흐름 (11-18 팀 결정 반영)
 
 ```
