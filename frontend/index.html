@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>도어벨 대시보드</title>
+<!-- 레퍼런스: gumloop.com (godly.design) — 연회색 무대 위 흰 앱 창, 3칸(목록·상세·설정), 작은 색 아이콘, 회색 섹션 머리줄, 검정 버튼 -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  :root {
+    --page: #FAFAFA; --stage: #F1F1F1; --panel: #FFFFFF; --bar: #F3F3F3; --hover: #F6F6F6;
+    --ink: #151517; --muted: #5F5F64; --faint: #737378; --line: #EAEAEA;
+    --high: #E5484D; --high-bg: #FDECEC; --high-ink: #B42318;
+    --mid: #F5A524; --mid-bg: #FFF4E0; --mid-ink: #8A5A00;
+    --low: #30A46C; --low-bg: #E9F7EF; --low-ink: #1F7A4A;
+    --live: #3B82F6; --rule: #8B5CF6;
+    --font: "Geist", "Pretendard Variable", Pretendard, system-ui, sans-serif;
+    --mono: "Geist Mono", ui-monospace, monospace;
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.55 var(--font); -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+  /* 상단 */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px clamp(16px, 4vw, 40px); }
+  .logo { font-weight: 600; font-size: 19px; letter-spacing: -0.4px; }
+  .logo i { font-style: normal; color: var(--faint); font-weight: 400; }
+  .btn { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 7px 14px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+  .btn:hover { background: var(--hover); }
+  .btn.dark { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .btn.dark:hover { background: #000; }
+  .btn.sm { padding: 4px 10px; font-size: 12px; }
+  .tag { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 2px 10px; background: var(--panel); }
+
+  /* 제목 + 범례 */
+  .hero { padding: 28px clamp(16px, 4vw, 40px) 20px; }
+  .legend { display: flex; gap: 6px; margin-bottom: 14px; }
+  .hero h1 { margin: 0; font-weight: 500; font-size: clamp(30px, 4vw, 44px); letter-spacing: -1.2px; line-height: 1.1; }
+  .hero p { margin: 10px 0 0; color: var(--muted); }
+
+  /* 위험 알림 띠 */
+  .alert { margin: 0 clamp(16px, 4vw, 40px) 14px; display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-radius: 10px;
+           background: var(--high-bg); color: var(--high-ink); border: 1px solid #F7C9C9; font-weight: 500; cursor: pointer; }
+
+  /* 무대 + 앱 창 */
+  .stage { margin: 0 clamp(16px, 4vw, 40px) 40px; background: var(--stage); border-radius: 18px; padding: clamp(10px, 2.5vw, 32px); }
+  .window { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+  .chrome { display: flex; gap: 7px; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+  .chrome span { width: 11px; height: 11px; border-radius: 50%; background: #FF5F57; }
+  .chrome span:nth-child(2) { background: #FEBC2E; } .chrome span:nth-child(3) { background: #28C840; }
+  .app { display: grid; grid-template-columns: 250px minmax(0, 1fr) 320px; min-height: 620px; }
+
+  /* 아이콘 (작은 색 사각형) */
+  .ico { width: 18px; height: 18px; border-radius: 5px; display: inline-grid; place-items: center; flex: none;
+         font: 600 10px var(--font); color: #fff; background: var(--faint); }
+  .ico.HIGH { background: var(--high); } .ico.MEDIUM { background: var(--mid); } .ico.LOW { background: var(--low); }
+  .ico.live { background: var(--live); animation: pulse 1.4s infinite; } .ico.rule { background: var(--rule); }
+  .ico.big { width: 44px; height: 44px; border-radius: 12px; font-size: 20px; }
+  @keyframes pulse { 50% { opacity: .45; } }
+
+  /* 왼쪽: 목록 */
+  .side { border-right: 1px solid var(--line); padding: 12px 10px; }
+  .filters { display: flex; gap: 4px; padding: 2px 4px 10px; flex-wrap: wrap; }
+  .chip { border: 1px solid var(--line); background: var(--panel); border-radius: 99px; padding: 2px 9px; font-size: 12px; cursor: pointer; color: var(--muted); }
+  .chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .group { font-size: 12px; color: var(--muted); padding: 10px 8px 4px; }
+  .item { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; border: 0; background: none; padding: 6px 8px; border-radius: 7px; cursor: pointer; color: var(--muted); }
+  .item:hover { background: var(--hover); }
+  .item[aria-selected="true"] { background: var(--bar); color: var(--ink); font-weight: 500; }
+  .item .t { font: 12px var(--mono); color: var(--faint); margin-left: auto; }
+  .empty { color: var(--faint); padding: 24px 8px; text-align: center; font-size: 13px; }
+
+  /* 가운데: 상세 */
+  .main { padding: clamp(20px, 3vw, 40px); min-width: 0; }
+  .title { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }
+  .title h2 { margin: 0; font-weight: 500; font-size: 30px; letter-spacing: -0.8px; line-height: 1.15; }
+  .pills { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pill { border: 1px solid var(--line); border-radius: 99px; padding: 2px 10px; font-size: 12px; color: var(--muted); background: var(--panel); }
+  .badge { border-radius: 99px; padding: 2px 10px; font: 600 12px var(--font); background: var(--bar); color: var(--muted); white-space: nowrap; }
+  .badge.HIGH { background: var(--high-bg); color: var(--high-ink); } .badge.MEDIUM { background: var(--mid-bg); color: var(--mid-ink); }
+  .badge.LOW { background: var(--low-bg); color: var(--low-ink); }
+  .photo { aspect-ratio: 16 / 9; max-width: 560px; border-radius: 12px; background: var(--bar); border: 1px solid var(--line); display: grid; place-items: center;
+           color: var(--faint); text-align: center; font-size: 13px; padding: 16px; margin-bottom: 22px; }
+  .h { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+  .main p { margin: 0 0 18px; max-width: 62ch; }
+  .quote { border-left: 2px solid var(--ink); padding-left: 12px; }
+
+  /* 오른쪽: 설정 패널 */
+  .panel { border-left: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 10px; background: #FCFCFC; }
+  .bar { background: var(--bar); border-radius: 8px; padding: 7px 10px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
+  .bar .n { color: var(--muted); font-weight: 400; }
+  .box { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 10px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .seg { display: inline-flex; background: var(--bar); border-radius: 8px; padding: 2px; }
+  .seg button { border: 0; background: none; padding: 4px 14px; border-radius: 6px; cursor: pointer; color: var(--muted); }
+  .seg button[aria-pressed="true"] { background: var(--panel); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--line), 0 1px 2px rgba(0,0,0,.06); }
+  textarea, input[type=text] { font: inherit; width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel); resize: vertical; }
+  textarea { min-height: 64px; }
+  .hint { font-size: 12px; color: var(--faint); margin: 0; }
+  .rules { list-style: none; margin: 0; padding: 0; }
+  .rules li { display: flex; align-items: center; gap: 9px; padding: 6px 2px; }
+  .rules li .txt { flex: 1; }
+  .x { border: 0; background: none; color: var(--faint); cursor: pointer; font-size: 15px; padding: 0 4px; }
+  .x:hover { color: var(--ink); }
+  .add { display: flex; gap: 6px; }
+
+  @media (max-width: 1080px) { .app { grid-template-columns: 220px minmax(0, 1fr); } .panel { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); } }
+  @media (max-width: 680px) { .app { grid-template-columns: 1fr; } .side { border-right: 0; border-bottom: 1px solid var(--line); } .top nav { display: none; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <span class="logo">Doorbell <i>/ 현관</i></span>
+  <span class="tag" id="src" title="Spring GET /api/v1/events 가 응답하면 실제 데이터, 아니면 목업">목업 · 11-18 실제 테스트 결과 기반</span>
+</header>
+
+<section class="hero">
+  <div class="legend" aria-hidden="true"><span class="ico live"></span><span class="ico LOW"></span><span class="ico MEDIUM"></span><span class="ico HIGH"></span></div>
+  <h1>누가 왔는지, 얼마나 위험한지<br>한눈에 보고 직접 정하기</h1>
+  <p>방문마다 AI가 판단한 위험도를 보고, 내 판단으로 올리거나 규칙을 남기면 다음 방문부터 반영돼요.</p>
+</section>
+
+<div id="alert"></div>
+
+<div class="stage">
+  <div class="window">
+    <div class="chrome" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="app">
+      <aside class="side">
+        <div class="filters" id="filters"></div>
+        <div id="list"></div>
+      </aside>
+      <main class="main" id="detail"></main>
+      <aside class="panel" id="panel"></aside>
+    </div>
+  </div>
+</div>
+
+<script>
+// 목업: Spring EventResponse 모양 + 대시보드용 칸(userRiskLevel·userNote·responses·imageUrl, Spring에 요청할 것)
+// 5~8번 요약은 11-18 통합 테스트에서 Spring에 실제로 저장된 값. 9번(방문 중)만 화면 확인용 가짜
+// Spring 연결: 이 파일을 backend/src/main/resources/static/index.html 로 두면 같은 주소라 CORS 없이 아래 load()가 실제 데이터를 쓴다
+let EVENTS = [
+  { eventId: 9, status: "DETECTED", startedAt: "2026-11-18T17:02:10", endedAt: null, riskLevel: null, summary: null, labels: ["person"], responses: [], imageUrl: null },
+  { eventId: 8, status: "COMPLETED", startedAt: "2026-11-18T16:56:07", endedAt: "2026-11-18T16:57:58", riskLevel: "HIGH", labels: ["person", "knife"],
+    summary: "16시에 방문자가 약 100초간 머물렀습니다. 영상 분석: 흉기 의심: knife, 90초 머묾. 위험도는 HIGH입니다.", responses: [], imageUrl: null },
+  { eventId: 7, status: "COMPLETED", startedAt: "2026-11-18T16:53:17", endedAt: "2026-11-18T16:54:36", riskLevel: "MEDIUM", labels: ["person"],
+    summary: "16시에 방문자가 약 66초간 머물렀습니다. 영상 분석: 64초 머묾. 위험도는 MEDIUM입니다.", responses: [], imageUrl: null },
+  { eventId: 6, status: "COMPLETED", startedAt: "2026-11-18T16:49:14", endedAt: "2026-11-18T16:50:15", riskLevel: "LOW", labels: ["person"],
+    summary: "16시에 방문자가 약 36초간 머물렀습니다. 위험도는 LOW입니다.", responses: [], imageUrl: null },
+  { eventId: 5, status: "COMPLETED", startedAt: "2026-11-18T16:26:44", endedAt: "2026-11-18T16:27:06", riskLevel: "LOW", labels: ["person"],
+    summary: "16시에 방문자가 약 0초간 머물렀습니다. 위험도는 LOW입니다.",
+    responses: [{ responseCode: "TEST_01", responseText: "안녕하세요. 테스트 응답입니다." }], imageUrl: null },
+];
+const KO = { LOW: "하", MEDIUM: "중", HIGH: "상" };
+const STATUS = { DETECTED: "방문 중", ANALYZING: "분석 중", COMPLETED: "완료", FAILED: "실패" };
+const LABEL_KO = { person: "사람", knife: "칼", "baseball bat": "야구방망이", helmet: "헬멧", "face mask": "마스크", balaclava: "복면", "cardboard box": "택배 상자" };
+
+// 사용자 입력은 Spring 연결 전까지 이 브라우저에만 저장 (막혀 있어도 화면은 돈다)
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+let user = store.get("doorbell.user", {});   // { [eventId]: { level, note } }
+let rules = store.get("doorbell.rules", ["헬멧 쓴 배달 기사는 정상", "마스크 쓰고 30초 넘게 있으면 상"]);
+let filter = "ALL";
+let selected = Number(location.hash.slice(1)) || 8;
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const hm = t => t ? t.slice(11, 16) : "";
+const dur = e => {
+  if (!e.endedAt) return "";
+  const s = Math.round((new Date(e.endedAt) - new Date(e.startedAt)) / 1000);
+  return s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`;
+};
+const level = e => user[e.eventId]?.level || e.riskLevel;
+const labels = e => e.labels || [];  // Spring 응답엔 아직 없음
+const resps = e => e.responses || (e.responseText ? [{ responseText: e.responseText }] : []);  // 명세 v1.0은 responseText 한 칸
+const ico = e => e.status === "DETECTED" ? `<span class="ico live" aria-hidden="true"></span>`
+  : `<span class="ico ${level(e) || ""}" aria-hidden="true">${KO[level(e)] || "?"}</span>`;
+const badge = lv => lv ? `<span class="badge ${lv}">${lv} · ${KO[lv]}</span>` : `<span class="badge">판단 전</span>`;
+
+function renderAlert() {
+  const h = EVENTS.find(e => e.status === "COMPLETED" && level(e) === "HIGH");
+  $("#alert").innerHTML = h ? `<div class="alert" data-id="${h.eventId}"><span class="ico HIGH" aria-hidden="true">!</span>
+    위험 방문 #${h.eventId} · ${hm(h.startedAt)} — ${esc(labels(h).map(l => LABEL_KO[l] || l).join(", ") || h.summary)}</div>` : "";
+}
+
+function renderList() {
+  $("#filters").innerHTML = ["ALL", "HIGH", "MEDIUM", "LOW"].map(f =>
+    `<button class="chip" data-f="${f}" aria-pressed="${f === filter}">${f === "ALL" ? "전체" : KO[f]}</button>`).join("");
+  const item = e => `<button class="item" data-id="${e.eventId}" aria-selected="${e.eventId === selected}">${ico(e)}
+      <span>${e.status === "DETECTED" ? "지금 방문 중" : `방문 #${e.eventId}`}</span><span class="t">${hm(e.startedAt)}</span></button>`;
+  const live = EVENTS.filter(e => e.status === "DETECTED");
+  const done = EVENTS.filter(e => e.status !== "DETECTED" && (filter === "ALL" || level(e) === filter));
+  $("#list").innerHTML = (live.length ? `<div class="group">진행 중</div>${live.map(item).join("")}` : "")
+    + `<div class="group">오늘</div>` + (done.length ? done.map(item).join("") : `<div class="empty">이 위험도의 방문이 없어요</div>`);
+}
+
+function renderDetail() {
+  const e = EVENTS.find(x => x.eventId === selected);
+  if (!e) { $("#detail").innerHTML = `<div class="empty">왼쪽에서 방문을 고르세요</div>`; return; }
+  $("#detail").innerHTML = `
+    <div class="title">
+      ${ico(e).replace('class="ico', 'class="ico big')}
+      <h2>${e.status === "DETECTED" ? "지금 방문 중" : `${hm(e.startedAt)} 방문`}</h2>
+      <div class="pills">
+        ${badge(e.riskLevel)}
+        <span class="pill">${STATUS[e.status]}</span>
+        <span class="pill">${hm(e.startedAt)}${e.endedAt ? " ~ " + hm(e.endedAt) : " ~"}</span>
+        ${dur(e) ? `<span class="pill">머문 시간 ${dur(e)}</span>` : ""}
+        ${labels(e).map(l => `<span class="pill">${esc(LABEL_KO[l] || l)}</span>`).join("")}
+      </div>
+    </div>
+    <div class="photo">${e.imageUrl ? `<img src="${esc(e.imageUrl)}" alt="대표 사진" style="max-width:100%;border-radius:10px">`
+      : e.status === "DETECTED" ? "방문이 끝나면 대표 사진이 올라와요" : "대표 사진 자리<br>Spring 이미지 조회 API 연결 전"}</div>
+    <div class="h">요약</div>
+    <p>${esc(e.summary ?? "방문자가 떠나고 10초 뒤 AI가 분석해요")}</p>
+    <div class="h">스피커가 한 말</div>
+    ${resps(e).length ? resps(e).map(r => `<p class="quote">“${esc(r.responseText)}”</p>`).join("") : `<p style="color:var(--faint)">응답 없음</p>`}`;
+}
+
+function renderPanel() {
+  const e = EVENTS.find(x => x.eventId === selected);
+  const u = (e && user[e.eventId]) || {};
+  const judge = !e || e.status === "DETECTED" ? `<div class="box hint">방문이 끝나면 위험도를 고를 수 있어요</div>` : `
+    <div class="box">
+      <div class="row" style="margin-bottom:10px"><span style="color:var(--muted)">AI 판단</span>${badge(e.riskLevel)}</div>
+      <div class="row"><span style="color:var(--muted)">내 판단</span>
+        <span class="seg" role="group" aria-label="내 판단">${["LOW", "MEDIUM", "HIGH"].map(l =>
+          `<button data-level="${l}" aria-pressed="${u.level === l}">${KO[l]}</button>`).join("")}</span></div>
+    </div>
+    <textarea id="note" maxlength="200" placeholder="왜 그렇게 봤는지 (예: 마스크 쓰고 계속 서성임)">${esc(u.note)}</textarea>
+    <div class="row"><p class="hint">다음 방문 판단부터 반영돼요</p><button class="btn dark sm" id="save">저장</button></div>`;
+  $("#panel").innerHTML = `
+    <div class="bar">위험도 <span class="n">▾</span></div>
+    ${judge}
+    <div class="bar" style="margin-top:6px">내 규칙 <span class="n">${rules.length}/10 ▾</span></div>
+    <ul class="rules">${rules.map((r, i) => `<li><span class="ico rule" aria-hidden="true">R</span><span class="txt">${esc(r)}</span>
+      <button class="x" data-del="${i}" aria-label="규칙 삭제">×</button></li>`).join("") || `<li class="hint">아직 규칙이 없어요</li>`}</ul>
+    <div class="add"><input type="text" id="rule" maxlength="100" placeholder="예: 밤 10시 이후 방문은 한 단계 올려 줘" ${rules.length >= 10 ? "disabled" : ""}>
+      <button class="btn sm" id="addRule" ${rules.length >= 10 ? "disabled" : ""}>추가</button></div>
+    <p class="hint">AI가 방문을 판단할 때 함께 읽어요. 흉기가 보이는 방문은 규칙으로 낮출 수 없어요.</p>`;
+}
+
+function render() { renderAlert(); renderList(); renderDetail(); renderPanel(); }
+
+document.addEventListener("click", ev => {
+  const t = ev.target.closest("button, .alert");
+  if (!t) return;
+  if (t.dataset.f) { filter = t.dataset.f; renderList(); }
+  else if (t.dataset.id) { selected = Number(t.dataset.id); location.hash = selected; render(); }
+  else if (t.dataset.level) {
+    const u = user[selected] || {};
+    u.level = u.level === t.dataset.level ? null : t.dataset.level;  // 다시 누르면 취소
+    user[selected] = u; store.set("doorbell.user", user); render();
+  } else if (t.id === "save") {
+    user[selected] = { ...(user[selected] || {}), note: $("#note").value.trim() };
+    store.set("doorbell.user", user); t.textContent = "저장됨";
+  } else if (t.id === "addRule") {
+    const v = $("#rule").value.trim();
+    if (v && rules.length < 10) { rules.push(v); store.set("doorbell.rules", rules); renderPanel(); }
+  } else if (t.dataset.del) { rules.splice(Number(t.dataset.del), 1); store.set("doorbell.rules", rules); renderPanel(); }
+});
+document.addEventListener("keydown", ev => { if (ev.key === "Enter" && ev.target.id === "rule") $("#addRule").click(); });
+
+// 3초마다 Spring 목록을 다시 불러온다. API가 없거나 실패하면 목업 그대로
+async function load() {
+  try {
+    const r = await fetch("/api/v1/events?limit=50");
+    if (r.ok) {
+      EVENTS = (await r.json()).sort((a, b) => b.eventId - a.eventId);
+      $("#src").textContent = "실시간 · Spring 연결됨";
+      if (!EVENTS.some(e => e.eventId === selected)) selected = EVENTS[0]?.eventId;
+      if (!document.activeElement?.matches("textarea, input")) render();  // 메모 쓰는 중엔 다시 그리지 않음
+    }
+  } catch {}
+}
+render();
+if (location.protocol.startsWith("http")) { load(); setInterval(load, 3000); }
+</script>
+</body>
+</html>
