@@ -8,7 +8,7 @@ import time
 import uuid
 
 from .camera import AutofocusFailed, CameraSessionCancelled
-from .spring import get_event_status
+from .spring import get_event_status, EventStatusAuthorizationError
 from .mqtt import MQTTStateError
 from .vision import analyze_image
 
@@ -32,6 +32,10 @@ class AsyncSpringController:
         self.near_count = self.far_count = self.attempts = self.failures = 0
         self.latched_at = self.last_true = self.last_lookup = None
         self.event_id = None
+        self.last_present = None
+        self.quiet_qualified = False
+        self.far_qualified = False
+        self.lookup_denied = False
         self.job = None
         self.job_error = None
         self.next_reconnect = 0
@@ -46,6 +50,27 @@ class AsyncSpringController:
         self.vision_allowed = threading.Event()
         self.vision_allowed.set()
 
+    def _ended(self, event_id):
+        ended = getattr(self.integration.events, 'ended', None)
+        if ended and ended(event_id) is True:
+            self.session_ended.set()
+            return True
+        return self.session_ended.is_set()
+
+    def _observe_end(self):
+        ended = getattr(self.integration.events, 'ended', None)
+        if self.event_id is not None and ended and ended(self.event_id) is True:
+            self.session_ended.set()
+            ended_id = self.event_id
+            self.event_id = None
+            self.state = 'CLOSING'
+            self.periodic_stop.set()
+            self.vision_allowed.clear()
+            self.near_count = 0
+            if not self.initial_complete.is_set():
+                self.failures = 1
+            logging.info('controller state=CLOSING reason=server_ended event_id=%s', ended_id)
+
     def _work(self, request_id, distance):
         event_id = None
         stage = 'event'
@@ -55,9 +80,11 @@ class AsyncSpringController:
                 return
             event_id = self.integration.create_event(request_id, distance)
             self.event_id = event_id
+            if self._ended(event_id):
+                return
             self.session_ready.set()
             logging.info('event request_id=%s event_id=%s result=created', request_id, event_id)
-            if self.stopping.is_set():
+            if self.stopping.is_set() or self._ended(event_id):
                 return
             enabled = bool(self.config['vision_base_url'])
             stage = 'capture'
@@ -66,7 +93,7 @@ class AsyncSpringController:
                 last_autofocus_error = None
                 while True:
                     try:
-                        camera = stack.enter_context(self.camera.session(self.stopping) if enabled else nullcontext(self.camera))
+                        camera = stack.enter_context(self.camera.session(self.session_ended) if enabled else nullcontext(self.camera))
                         break
                     except AutofocusFailed as exc:
                         last_autofocus_error = exc
@@ -74,7 +101,7 @@ class AsyncSpringController:
                             raise
                         deadline = time.monotonic() + AUTOFOCUS_RETRY_DELAY_S
                         while True:
-                            if (self.stopping.is_set() or self.session_ended.is_set() or
+                            if (self.stopping.is_set() or self._ended(event_id) or
                                     self.periodic_stop.is_set() or self.terminal):
                                 raise
                             remaining = deadline - time.monotonic()
@@ -86,7 +113,7 @@ class AsyncSpringController:
                             stage = 'mqtt'
                             self.integration.events.check()
                             stage = 'capture'
-                            if (self.stopping.is_set() or self.session_ended.is_set() or
+                            if (self.stopping.is_set() or self._ended(event_id) or
                                     self.periodic_stop.is_set() or self.terminal):
                                 raise
                             if self.vision_allowed.is_set():
@@ -96,7 +123,7 @@ class AsyncSpringController:
                 # A pause or stop may have arrived while the camera was starting.
                 if enabled and attempt > 1:
                     while True:
-                        if (self.stopping.is_set() or self.session_ended.is_set() or
+                        if (self.stopping.is_set() or self._ended(event_id) or
                                 self.periodic_stop.is_set() or self.terminal):
                             raise last_autofocus_error
                         if not self.vision_allowed.wait(.1):
@@ -104,31 +131,33 @@ class AsyncSpringController:
                         stage = 'mqtt'
                         self.integration.events.check()
                         stage = 'capture'
-                        if (self.stopping.is_set() or self.session_ended.is_set() or
+                        if (self.stopping.is_set() or self._ended(event_id) or
                                 self.periodic_stop.is_set() or self.terminal):
                             raise last_autofocus_error
                         if self.vision_allowed.is_set():
                             break
-                if self.stopping.is_set() or self.session_ended.is_set():
+                if self.stopping.is_set() or self._ended(event_id):
                     return
                 path = camera.capture(request_id)
                 logging.info('capture request_id=%s event_id=%s result=success path=%s', request_id, event_id, path)
-                if self.stopping.is_set() or self.session_ended.is_set():
+                if self.stopping.is_set() or self._ended(event_id):
                     return
                 stage = 'upload'
                 self.integration.upload(event_id, path, request_id, finish=False)
                 logging.info('upload request_id=%s event_id=%s result=success', request_id, event_id)
+                if self._ended(event_id):
+                    return
                 if enabled:
                     # The representative is sent first, unless the visit has paused or ended.
                     while True:
                         while not self.vision_allowed.wait(.1):
-                            if self.stopping.is_set() or self.session_ended.is_set() or self.periodic_stop.is_set():
+                            if self.stopping.is_set() or self._ended(event_id) or self.periodic_stop.is_set():
                                 return
-                        if self.stopping.is_set() or self.session_ended.is_set():
+                        if self.stopping.is_set() or self._ended(event_id):
                             return
                         stage = 'mqtt'
                         self.integration.events.check()
-                        if self.stopping.is_set() or self.session_ended.is_set():
+                        if self.stopping.is_set() or self._ended(event_id):
                             return
                         if self.vision_allowed.is_set():
                             break
@@ -144,17 +173,17 @@ class AsyncSpringController:
                 interval = self.config['vision_interval_s']
                 next_slot = _next_slot(first_start, time.monotonic(), interval)
                 sequence = 0
-                while not (self.periodic_stop.is_set() or self.stopping.is_set() or self.session_ended.is_set()):
+                while not (self.periodic_stop.is_set() or self.stopping.is_set() or self._ended(event_id)):
                     if not self.vision_allowed.is_set():
                         while not self.vision_allowed.wait(.1):
-                            if self.periodic_stop.is_set() or self.stopping.is_set() or self.session_ended.is_set():
+                            if self.periodic_stop.is_set() or self.stopping.is_set() or self._ended(event_id):
                                 return
                         next_slot = time.monotonic() + interval
                     remaining = next_slot - time.monotonic()
                     if remaining > 0:
                         self.periodic_stop.wait(min(.1, remaining))
                         continue
-                    if not self.vision_allowed.is_set() or self.stopping.is_set() or self.session_ended.is_set() or self.periodic_stop.is_set():
+                    if not self.vision_allowed.is_set() or self.stopping.is_set() or self._ended(event_id) or self.periodic_stop.is_set():
                         continue
                     sequence += 1
                     frame_id = '%s_%06d' % (request_id, sequence)
@@ -162,11 +191,11 @@ class AsyncSpringController:
                     stage = 'capture'
                     path = camera.capture(frame_id)
                     logging.info('capture request_id=%s event_id=%s result=success path=%s', frame_id, event_id, path)
-                    if not self.vision_allowed.is_set() or self.stopping.is_set() or self.session_ended.is_set() or self.periodic_stop.is_set():
+                    if not self.vision_allowed.is_set() or self.stopping.is_set() or self._ended(event_id) or self.periodic_stop.is_set():
                         continue
                     stage = 'mqtt'
                     self.integration.events.check()
-                    if not self.vision_allowed.is_set() or self.stopping.is_set() or self.session_ended.is_set() or self.periodic_stop.is_set():
+                    if not self.vision_allowed.is_set() or self.stopping.is_set() or self._ended(event_id) or self.periodic_stop.is_set():
                         continue
                     stage = 'vision'
                     analyze_image(self.config, event_id, path)
@@ -190,9 +219,10 @@ class AsyncSpringController:
 
     def cancel(self):
         self.stopping.set()
+        self.session_ended.set()
 
     def initial_done(self):
-        return self.initial_complete.is_set() or (self.job_error is not None and self.job is not None and not self.job.is_alive())
+        return self.initial_complete.is_set() or (self.job is not None and not self.job.is_alive() and (self.job_error is not None or self.session_ended.is_set()))
 
     def busy(self):
         return self.job is not None and self.job.is_alive()
@@ -206,6 +236,7 @@ class AsyncSpringController:
         self.integration.events.check()
 
     def step(self, reading):
+        self._observe_end()
         if self.state in ('RECOVERING', 'SAFE_HOLD'):
             return self._recovery_step(reading)
         try:
@@ -238,8 +269,14 @@ class AsyncSpringController:
             if self.last_lookup is not None and now - self.last_lookup < 2:
                 return
             self.last_lookup = now
+            if self.lookup_denied:
+                return
             try:
                 status = self.status_lookup(self.config, self.event_id)
+            except EventStatusAuthorizationError as exc:
+                self.lookup_denied = True
+                logging.warning('%s; waiting for MQTT ENDED or operator action', exc)
+                return
             except (OSError, http.client.HTTPException) as exc:
                 logging.warning('Spring event lookup temporarily unavailable: %s', exc)
                 return
@@ -280,6 +317,9 @@ class AsyncSpringController:
         self.failures = 0
         self.last_lookup, self.terminal = None, False
         self.verified_detected = False
+        self.lookup_denied = False
+        self.quiet_qualified = False
+        self.far_qualified = False
         self.event_id = None
         self.job_error = None
         self.reconnected = False
@@ -291,11 +331,53 @@ class AsyncSpringController:
         logging.info('controller state=ARMED result=rearmed')
 
     def _step(self, reading):
-        self.check()
+        if self.state != 'CLOSING':
+            self.check()
         now = self.clock()
         value = reading.distance_cm
         valid = value is not None and math.isfinite(value) and 2 <= value <= 400 and not reading.error
         logging.info('sensor distance_cm=%s error=%s state=%s', value, reading.error, self.state)
+        quiet = self.last_present is not None and now - self.last_present >= 10
+        if valid and value < self.config['far_cm']:
+            self.last_present = now
+        if self.state == 'CLOSING':
+            if self.job_error is not None and not isinstance(self.job_error, MQTTStateError):
+                self.check()
+            try:
+                self.integration.events.check()
+            except MQTTStateError as exc:
+                if exc.failure_reason not in ('disconnected', 'puback_timeout', 'publish_failed', 'connect_failed', 'startup_timeout', 'connack_rejected', 'subscribe_failed', 'suback_invalid'):
+                    self.state = 'SAFE_HOLD'
+                    return
+                if self.busy() or now < self.next_reconnect:
+                    return
+                try:
+                    self.integration.reconnect()
+                except (OSError, MQTTStateError) as reconnect_exc:
+                    if isinstance(reconnect_exc, MQTTStateError) and reconnect_exc.failure_reason == 'unexpected_created':
+                        self.state = 'SAFE_HOLD'
+                    else:
+                        self.next_reconnect = now + 3
+                    logging.warning('mqtt reconnect failed after ended: %s', reconnect_exc)
+                    return
+            self.far_count = self.far_count + 1 if valid and value >= self.config['far_cm'] else 0
+            if quiet:
+                self.quiet_qualified = True
+            if self.far_count >= self.config['consecutive']:
+                self.far_qualified = True
+            if valid and value <= self.config['near_cm']:
+                self.near_count = self.near_count + 1 if (self.quiet_qualified or self.far_qualified) else 0
+            else:
+                self.near_count = 0
+            if not self.busy() and (self.far_qualified or self.near_count >= self.config['consecutive']):
+                if self.max_attempts is not None and self.attempts >= self.max_attempts:
+                    return
+                near_count = self.near_count
+                self._reset()
+                if near_count >= self.config['consecutive']:
+                    self.near_count = near_count - 1
+                    return self._step(reading)
+            return
         if self.state == 'ARMED':
             self.near_count = self.near_count + 1 if valid and value <= self.config['near_cm'] else 0
             if self.near_count >= self.config['consecutive']:
@@ -319,17 +401,27 @@ class AsyncSpringController:
             self.check()
             if not self.terminal and present and self.verified_detected and now - self.last_lookup < 2:
                 self.verified_detected = False
-                self.integration.events.publish_presence()
-                self.last_true = self.clock()
-                self.vision_allowed.set()
+                if self.integration.events.publish_presence() is not False:
+                    self.last_true = self.clock()
+                    self.vision_allowed.set()
+                self._observe_end()
                 return
             if not self.terminal and (self.last_lookup is None or now - self.last_lookup >= 1):
                 self.last_lookup = now
                 self.verified_detected = False
+                if self.lookup_denied:
+                    return
                 try:
                     status = self.status_lookup(self.config, self.event_id)
+                except EventStatusAuthorizationError as exc:
+                    self.lookup_denied = True
+                    logging.warning('%s; waiting for MQTT ENDED', exc)
+                    return
                 except (OSError, http.client.HTTPException) as exc:
                     logging.warning('Spring event lookup temporarily unavailable: %s', exc)
+                    return
+                self._observe_end()
+                if self.state == 'CLOSING':
                     return
                 self.check()
                 if status != 'DETECTED':
@@ -347,8 +439,9 @@ class AsyncSpringController:
                 self._reset()
         elif present and self.session_ready.is_set() and gap >= self.config['presence_interval_s']:
             # A reading is obtained on this iteration; never send while far or invalid.
-            self.integration.events.publish_presence()
-            self.last_true = self.clock()
+            if self.integration.events.publish_presence() is not False:
+                self.last_true = self.clock()
+            self._observe_end()
 
     def close(self, check=True):
         self.periodic_stop.set()

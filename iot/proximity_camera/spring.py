@@ -8,6 +8,10 @@ from urllib.parse import urlsplit
 from .mqtt import valid_id
 
 
+class EventStatusAuthorizationError(RuntimeError):
+    pass
+
+
 class SpringIntegration:
     def __init__(self, config, events, event_factory=None):
         self.config, self.events = config, events
@@ -84,6 +88,8 @@ def get_event_status(config, event_id):
         conn.request('GET', '/api/v1/events/%s' % event_id)
         response = conn.getresponse()
         data = response.read(65537)
+        if response.status in (401, 403):
+            raise EventStatusAuthorizationError('Spring event lookup unauthorized (HTTP %s)' % response.status)
         if response.status != 200 or len(data) > 65536:
             raise RuntimeError('Spring event lookup failed (HTTP %s)' % response.status)
         try:

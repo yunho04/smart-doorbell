@@ -22,11 +22,13 @@ class EventClient:
         self.cfg = config
         self.sensor_topic = 'doorbell/%s/sensor' % config['device_id']
         self.event_topic = 'doorbell/%s/event' % config['device_id']
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.ready = threading.Event()
         self.received = threading.Event()
         self.pending = False
         self.event_id = None
+        self.created_id = None
+        self.ended_id = None
         self.seen = set()
         self.poisoned = False
         self.failure_reason = None
@@ -82,13 +84,20 @@ class EventClient:
             return
         try:
             data = json.loads(message.payload)
-            if not isinstance(data, dict) or data.get('status') != 'CREATED' or not valid_id(data.get('eventId')):
+            if not isinstance(data, dict) or data.get('status') not in ('CREATED', 'ENDED') or not valid_id(data.get('eventId')):
                 return
             event_id = data['eventId']
         except (UnicodeDecodeError, ValueError, TypeError):
             return
         with self.lock:
             if self.poisoned or self.closing:
+                return
+            if data['status'] == 'ENDED':
+                if self.pending and event_id == self.event_id:
+                    self.ended_id = event_id
+                    self.event_id = None
+                    self.pending = False
+                    logging.info('mqtt event_id=%s status=ENDED', event_id)
                 return
             if event_id in self.seen:
                 return
@@ -97,7 +106,7 @@ class EventClient:
                 self._fail('unexpected_created', active_event_id=self.event_id,
                            received_event_id=event_id, pending=self.pending)
             else:
-                self.event_id = event_id
+                self.event_id = self.created_id = event_id
                 self.received.set()
 
     def _disconnect(self, client, userdata, flags, reason_code, properties):
@@ -132,6 +141,8 @@ class EventClient:
                 raise RuntimeError('MQTT event state unavailable')
             self.pending = True
             self.event_id = None
+            self.created_id = None
+            self.ended_id = None
             self.received.clear()
         deadline = time.monotonic() + self.cfg['event_timeout_s']
         try:
@@ -140,26 +151,34 @@ class EventClient:
                 with self.lock: self._fail('event_response_timeout')
                 self.check()
             self.check()
-            with self.lock: return self.event_id
+            with self.lock: return self.created_id
         except BaseException:
             with self.lock: self._fail('aborted')
             raise
 
-    def publish_presence(self, timeout=None):
-        self.check()
+    def ended(self, event_id):
         with self.lock:
-            if self.closing or not self.pending:
-                raise RuntimeError('MQTT session unavailable')
+            return event_id is not None and self.ended_id == event_id
+
+    def publish_presence(self, timeout=None):
         payload = json.dumps({'deviceId': self.cfg['device_id'], 'sensorType': self.cfg['sensor_type'], 'value': 1, 'presenceDetected': True}, separators=(',', ':'))
         try:
-            info = self.client.publish(self.sensor_topic, payload, qos=1, retain=False)
-            if info.rc != 0:
-                raise RuntimeError('MQTT publish failed')
+            with self.lock:
+                if self.poisoned:
+                    raise MQTTStateError(self.failure_reason)
+                if not self.pending and self.ended_id is not None:
+                    return False
+                if self.closing or not self.pending:
+                    raise RuntimeError('MQTT session unavailable')
+                info = self.client.publish(self.sensor_topic, payload, qos=1, retain=False)
+                if info.rc != 0:
+                    raise RuntimeError('MQTT publish failed')
             info.wait_for_publish(timeout=self.cfg['presence_ack_timeout_s'] if timeout is None else timeout)
             if not info.is_published():
                 with self.lock: self._fail('puback_timeout')
                 self.check()
             self.check()
+            return True
         except (OSError, RuntimeError) as exc:
             with self.lock: self._fail('publish_failed')
             raise MQTTStateError(self.failure_reason) from exc

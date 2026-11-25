@@ -52,6 +52,30 @@ class MQTTTests(unittest.TestCase):
         self.assertEqual(self.events.create_event('req', 32), 15)
         self.assertEqual(self.fake.published, [('doorbell/1/sensor', {'deviceId': 1, 'sensorType': 'MOTION', 'value': 1, 'presenceDetected': True}, 1, False)])
         self.fake.message(15); self.events.check(); self.events.finish()
+    def test_ended_requires_matching_active_nonretained_id(self):
+        self.events.create_event('r', 40)
+        for event_id, topic, retain in [(16, 'doorbell/1/event', False), (15, 'other', False), (15, 'doorbell/1/event', True), (False, 'doorbell/1/event', False)]:
+            self.fake.message(event_id, topic, retain, 'ENDED')
+        self.assertEqual(self.events.event_id, 15)
+        self.fake.message(15, status='ENDED')
+        self.fake.message(15, status='ENDED')
+        self.assertTrue(self.events.ended(15))
+        self.assertIsNone(self.events.event_id)
+        self.assertFalse(self.events.pending)
+        self.assertFalse(self.events.publish_presence())
+        self.events.check()
+
+    def test_created_then_ended_before_publish_returns(self):
+        original = self.fake.publish
+        def publish(*args, **kwargs):
+            info = original(*args, **kwargs)
+            self.fake.message(15, status='ENDED')
+            return info
+        self.fake.publish = publish
+        self.assertEqual(self.events.create_event('r', 40), 15)
+        self.assertTrue(self.events.ended(15))
+        self.events.check()
+
     def test_invalid_messages_ignored_then_timeout(self):
         self.fake.respond = None
         for value, topic, retain in [(False,'doorbell/1/event',False),(5,'other',False),(7,'doorbell/1/event',True)]:
@@ -249,6 +273,105 @@ class AsyncTests(unittest.TestCase):
     def begin(self):
         self.step(0, 40)
         self.assertTrue(self.capturing.wait(1))
+    def test_early_end_before_creation_returns_stops_without_capture(self):
+        original = self.fake.publish
+        def publish(*args, **kwargs):
+            info = original(*args, **kwargs)
+            self.fake.message(15, status='ENDED')
+            return info
+        self.fake.publish = publish
+        self.controller.max_attempts = 1
+        self.step(0, 40)
+        self.controller.job.join(1)
+        self.step(1, None, 'no echo')
+        self.assertTrue(self.controller.initial_done())
+        self.assertEqual(self.controller.failures, 1)
+        self.assertFalse(self.capturing.is_set())
+        self.assertEqual(self.uploads, [])
+
+    def test_ended_then_disconnect_reconnects_only_after_worker(self):
+        self.begin()
+        self.fake.message(15, status='ENDED')
+        self.fake.on_disconnect(self.fake, None, None, 1, None)
+        replacements = []
+        def reconnect():
+            self.assertFalse(self.controller.busy())
+            fresh = EventClient(self.cfg, FakeClient()); fresh.start()
+            self.controller.integration.events = fresh
+            replacements.append(fresh)
+        self.controller.integration.reconnect = reconnect
+        self.step(2, 80)
+        self.assertEqual(replacements, [])
+        self.release.set(); self.controller.job.join(1)
+        self.step(3, 80)
+        self.assertEqual(len(replacements), 1)
+        self.assertEqual(self.controller.state, 'ARMED')
+        replacements[0].close()
+
+    def test_closing_does_not_discard_worker_failure(self):
+        self.begin()
+        self.fake.message(15, status='ENDED')
+        self.step(1, None, 'no echo')
+        self.controller.job_error = RuntimeError('camera cleanup failed')
+        self.release.set(); self.controller.job.join(1)
+        with self.assertRaisesRegex(RuntimeError, 'camera cleanup failed'):
+            self.step(2, 80)
+        self.assertEqual(self.controller.attempts, 1)
+
+    def test_far_release_is_remembered_while_worker_closes(self):
+        self.cfg['consecutive'] = 3
+        for t in (0, 1, 2): self.step(t, 40)
+        self.assertTrue(self.capturing.wait(1))
+        self.fake.message(15, status='ENDED')
+        for t in (3, 4, 5): self.step(t, 80)
+        self.step(6, 60)
+        self.release.set(); self.controller.job.join(1)
+        self.step(7, 60)
+        self.assertEqual(self.controller.state, 'ARMED')
+
+    def test_ended_during_capture_preserves_file_and_rearms_after_quiet(self):
+        self.cfg['consecutive'] = 3
+        for t in (0, 1, 2): self.step(t, 40)
+        self.assertTrue(self.capturing.wait(1))
+        self.fake.message(15, status='ENDED')
+        self.step(3, None, 'no echo')
+        self.assertIsNone(self.controller.event_id)
+        self.assertEqual(self.controller.state, 'CLOSING')
+        self.release.set(); self.controller.job.join(1)
+        self.assertEqual(self.uploads, [])
+        self.fake.respond = 16
+        self.step(13, 60)
+        for t in (14, 15, 16): self.step(t, 40)
+        self.controller.job.join(1)
+        self.assertEqual(self.controller.attempts, 2)
+        self.assertEqual(self.uploads, [16])
+
+    def test_early_end_while_present_requires_release(self):
+        self.cfg['consecutive'] = 3
+        for t in (0, 1, 2): self.step(t, 40)
+        self.assertTrue(self.capturing.wait(1))
+        self.fake.message(15, status='ENDED')
+        self.step(3, 40)
+        self.release.set(); self.controller.job.join(1)
+        for t in range(4, 20): self.step(t, 40)
+        self.assertEqual(self.controller.attempts, 1)
+        for t in (20, 21, 22): self.step(t, 80)
+        self.assertEqual(self.controller.state, 'ARMED')
+
+    def test_unauthorized_status_waits_for_ended(self):
+        from proximity_camera.spring import EventStatusAuthorizationError
+        self.begin(); self.release.set(); self.controller.job.join(1)
+        calls = []
+        def denied(cfg, event_id):
+            calls.append(event_id)
+            raise EventStatusAuthorizationError('HTTP 401')
+        self.controller.status_lookup = denied
+        self.step(11, None, 'no echo'); self.step(13, None, 'no echo')
+        self.assertEqual(calls, [15])
+        self.fake.message(15, status='ENDED')
+        self.step(14, 80)
+        self.assertEqual(self.controller.state, 'ARMED')
+
     def test_heartbeats_during_camera_and_stop_on_far_invalid(self):
         self.begin()
         for t in (2, 4, 6, 8, 10, 12): self.step(t, 40)
