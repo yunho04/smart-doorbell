@@ -338,6 +338,55 @@ class AsyncTests(unittest.TestCase):
         self.step(13.5, 40)
         self.assertEqual(len(self.fake.published), 2)
 
+    def test_autofocus_skips_visit_then_rearms_and_succeeds(self):
+        from proximity_camera.camera import AutofocusFailed
+        from contextlib import contextmanager
+        attempts = []
+        @contextmanager
+        def session(stopping):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise AutofocusFailed('autofocus failed')
+            yield self.controller.camera
+        self.controller.config['vision_base_url'] = 'http://127.0.0.1:8000'
+        self.controller.camera.session = session
+        with patch.object(self.controller.integration, 'abort') as abort, \
+             patch('proximity_camera.async_controller.analyze_image') as vision:
+            self.step(0, 40); self.controller.job.join(2)
+            self.assertEqual(self.controller.event_id, 15)
+            self.assertEqual(self.controller.state, 'LATCHED')
+            self.assertTrue(self.controller.initial_done())
+            self.assertEqual(self.uploads, [])
+            abort.assert_not_called(); vision.assert_not_called()
+            self.step(2, 40)
+            self.assertEqual(len(self.fake.published), 2)
+            self.status = 'ANALYZING'; self.step(12, 80)
+            self.assertEqual(self.controller.state, 'ARMED')
+            self.fake.respond = 16
+            self.release.set(); self.step(13, 40)
+            self.controller.job.join(.5)
+            self.assertEqual(self.uploads, [16])
+            self.assertEqual(vision.call_count, 1)
+            abort.assert_not_called()
+            self.controller.close()
+
+    def test_final_autofocus_failure_remains_visible_after_rearm_check(self):
+        from proximity_camera.camera import AutofocusFailed
+        from contextlib import contextmanager
+        @contextmanager
+        def session(stopping):
+            raise AutofocusFailed('autofocus failed')
+            yield
+        self.controller.config['vision_base_url'] = 'http://127.0.0.1:8000'
+        self.controller.max_attempts = 1
+        self.controller.camera.session = session
+        self.step(0, 40); self.controller.job.join(2)
+        self.status = 'ANALYZING'; self.step(11, 80)
+        self.assertTrue(self.controller.initial_done())
+        self.assertEqual(self.controller.failures, 1)
+        self.assertEqual(self.controller.attempts, 1)
+        self.controller.close()
+
     def test_close_waits_for_job(self):
         self.begin(); self.release.set(); self.controller.close()
         self.assertEqual(self.uploads, [15]); self.assertFalse(self.controller.job.is_alive())
@@ -418,6 +467,34 @@ class ShutdownTests(AsyncTests):
         self.controller.job = None
 
 class MaxCapturesCLITests(unittest.TestCase):
+    def test_autofocus_failure_exits_nonzero(self):
+        from proximity_camera.__main__ import main
+        from proximity_camera.camera import AutofocusFailed
+        from contextlib import contextmanager
+        from unittest.mock import MagicMock
+        class Sensor:
+            def __init__(self, *args): pass
+            def read(self): return Reading(40, 0, None)
+            def close(self): pass
+        class Camera:
+            def __init__(self, *args): pass
+            @contextmanager
+            def session(self, stopping):
+                raise AutofocusFailed('autofocus failed')
+                yield
+        cfg = dict(DEFAULTS, consecutive=1, interval_s=.001, mqtt_host='127.0.0.1',
+                   spring_base_url='http://127.0.0.1:8080', vision_base_url='http://127.0.0.1:8000')
+        integration = MagicMock()
+        integration.create_event.return_value = 15
+        with patch('proximity_camera.__main__.load_config', return_value=cfg), \
+             patch('proximity_camera.__main__.MockSensor', Sensor), \
+             patch('proximity_camera.__main__.Camera', Camera), \
+             patch('proximity_camera.mqtt.EventClient', return_value=MagicMock()), \
+             patch('proximity_camera.spring.SpringIntegration', return_value=integration):
+            self.assertEqual(main(['run', '--mode', 'mock', '--spring', '--max-captures', '1']), 1)
+        integration.upload.assert_not_called()
+        integration.abort.assert_not_called()
+
     def test_one_capture_keeps_reading_until_worker_done(self):
         from proximity_camera.__main__ import main
         from unittest.mock import MagicMock

@@ -7,7 +7,7 @@ import threading
 import time
 import uuid
 
-from .camera import CameraSessionCancelled
+from .camera import AutofocusFailed, CameraSessionCancelled
 from .spring import get_event_status
 from .mqtt import MQTTStateError
 from .vision import analyze_image
@@ -129,9 +129,14 @@ class AsyncSpringController:
         except CameraSessionCancelled:
             logging.info('camera request_id=%s event_id=%s result=cancelled', active_frame_id, event_id)
         except BaseException as exc:
-            self.job_error = exc
-            logging.error('%s request_id=%s event_id=%s result=failed reason=%s', stage, active_frame_id, event_id, exc)
-            self.integration.abort()
+            if isinstance(exc, AutofocusFailed) and stage == 'capture' and event_id is not None:
+                logging.warning('capture request_id=%s event_id=%s result=skipped reason=autofocus_failed', active_frame_id, event_id)
+                self.failures = 1
+                self.initial_complete.set()
+            else:
+                self.job_error = exc
+                logging.error('%s request_id=%s event_id=%s result=failed reason=%s', stage, active_frame_id, event_id, exc)
+                self.integration.abort()
 
     def cancel(self):
         self.stopping.set()
@@ -285,6 +290,9 @@ class AsyncSpringController:
                     self.verified_detected = True
                     self.last_lookup = self.clock()
             if self.terminal and not self.busy() and self.far_count >= self.config['consecutive'] and now - self.latched_at >= self.config['cooldown_s']:
+                # The main loop must observe the final attempt before rearming clears it.
+                if self.max_attempts is not None and self.attempts >= self.max_attempts and self.initial_complete.is_set():
+                    return
                 self.integration.events.finish()
                 self._reset()
         elif present and self.session_ready.is_set() and gap >= self.config['presence_interval_s']:

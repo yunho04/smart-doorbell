@@ -20,6 +20,10 @@ def _png(identity=None):
             chunk(b"IDAT", zlib.compress((b"\x00" + b"\x66\x99\xcc" * 128) * 72)) + chunk(b"IEND", b""))
 
 
+class AutofocusFailed(RuntimeError):
+    """The camera explicitly reported autofocus failure."""
+
+
 def _prepare(camera, settle, af_timeout, width, height, controls, clock, started):
     camera.configure(camera.create_still_configuration(
         main={"size": (width, height)}, buffer_count=3, queue=False,
@@ -51,7 +55,7 @@ def _prepare(camera, settle, af_timeout, width, height, controls, clock, started
             if state == controls.AfStateEnum.Focused:
                 break
             if state == controls.AfStateEnum.Failed:
-                raise RuntimeError("autofocus failed")
+                raise AutofocusFailed("autofocus failed")
             if state not in (controls.AfStateEnum.Idle, controls.AfStateEnum.Scanning):
                 raise RuntimeError("unsupported autofocus metadata: AfState=%r" % (state,))
     except (TimeoutError, FutureTimeoutError) as exc:
@@ -101,7 +105,7 @@ def _session_worker(pipe, cfg):
             pipe.send(('captured', None))
     except BaseException as exc:
         try:
-            pipe.send(('error', str(exc)))
+            pipe.send(('autofocus_failed' if isinstance(exc, AutofocusFailed) else 'error', str(exc)))
         except (BrokenPipeError, EOFError, OSError):
             pass
     finally:
@@ -208,9 +212,9 @@ class CameraSession:
                 self.started = True
                 child.close()
                 self._receive('ready', self.camera.config['camera_timeout_s'])
-            except BaseException:
+            except BaseException as exc:
                 child.close()
-                self.close()
+                self.close(require_clean=isinstance(exc, AutofocusFailed))
                 raise
         return self
 
@@ -227,6 +231,8 @@ class CameraSession:
                     result, detail = self.pipe.recv()
                 except EOFError as exc:
                     raise RuntimeError('camera session exited') from exc
+                if result == 'autofocus_failed' and expected == 'ready':
+                    raise AutofocusFailed(detail)
                 if result != expected:
                     raise RuntimeError('camera session failed: %s' % detail)
                 return
@@ -245,7 +251,7 @@ class CameraSession:
     def capture(self, request_id):
         return self.camera.capture(request_id, self)
 
-    def close(self):
+    def close(self, require_clean=False):
         process, pipe = self.process, self.pipe
         self.process = self.pipe = None
         try:
@@ -268,6 +274,8 @@ class CameraSession:
                             process.join(2)
                         if process.is_alive():
                             raise RuntimeError('camera process did not stop')
+                        if forced and require_clean:
+                            raise RuntimeError('camera process required forced shutdown')
                         if process.exitcode != 0 and not forced:
                             raise RuntimeError('camera process exited with code %s' % process.exitcode)
                 finally:

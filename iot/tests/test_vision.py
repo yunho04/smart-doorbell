@@ -321,6 +321,17 @@ def spawned_fake_camera(pipe, cfg):
     pipe.close()
 
 
+def spawned_af_failure(pipe, cfg):
+    pipe.send(('autofocus_failed', 'autofocus failed'))
+    pipe.close()
+
+
+def spawned_af_cleanup_failure(pipe, cfg):
+    pipe.send(('autofocus_failed', 'autofocus failed'))
+    pipe.close()
+    raise RuntimeError('cleanup failed')
+
+
 class CameraIPCTests(unittest.TestCase):
     def session(self):
         from proximity_camera.camera import Camera, CameraSession
@@ -338,6 +349,38 @@ class CameraIPCTests(unittest.TestCase):
                 self.assertIsNone(session.pipe)
                 self.assertIsNone(session.process)
                 session.close()
+
+    def test_autofocus_ipc_requires_clean_child_exit(self):
+        from proximity_camera.camera import AutofocusFailed, Camera
+        cfg = dict(DEFAULTS, camera_timeout_s=5)
+        for target, error in ((spawned_af_failure, AutofocusFailed),
+                              (spawned_af_cleanup_failure, RuntimeError)):
+            with self.subTest(target=target.__name__):
+                session = Camera(cfg, 'hardware').session()
+                with patch('proximity_camera.camera._session_worker', target):
+                    with self.assertRaises(error) as raised:
+                        session.__enter__()
+                if target is spawned_af_cleanup_failure:
+                    self.assertNotIsInstance(raised.exception, AutofocusFailed)
+                self.assertIsNone(session.process)
+                self.assertIsNone(session.pipe)
+
+    def test_child_sends_explicit_autofocus_tag(self):
+        import sys
+        import types
+        from proximity_camera.camera import AutofocusFailed, _session_worker
+        class Pipe:
+            def __init__(self): self.outgoing = []
+            def send(self, value): self.outgoing.append(value)
+            def close(self): pass
+        class Camera:
+            def close(self): pass
+        pipe = Pipe()
+        modules = {'picamera2': types.SimpleNamespace(Picamera2=Camera),
+                   'libcamera': types.SimpleNamespace(controls=object())}
+        with patch.dict(sys.modules, modules), patch('proximity_camera.camera._prepare', side_effect=AutofocusFailed('autofocus failed')):
+            _session_worker(pipe, DEFAULTS)
+        self.assertEqual(pipe.outgoing, [('autofocus_failed', 'autofocus failed')])
 
     def test_receive_timeout_cancel_eof_and_dead_worker(self):
         from proximity_camera.camera import CameraSessionCancelled
