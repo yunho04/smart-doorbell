@@ -72,6 +72,26 @@ class MQTTTests(unittest.TestCase):
         other._disconnect(other.client, None, None, 1, None)
         with self.assertRaises(RuntimeError): other.create_event('r', 40)
         other.close()
+    def test_failure_callbacks_log_first_cause_and_context(self):
+        self.events.create_event('r', 40)
+        with self.assertLogs(level='ERROR') as logs:
+            self.fake.on_disconnect(self.fake, None, None, 7, None)
+            self.events.abort()
+            with self.assertRaisesRegex(RuntimeError, 'MQTT event state uncertain'):
+                self.events.check()
+        self.assertEqual(self.events.failure_reason, 'disconnected')
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn('mqtt result=failed reason=disconnected reason_code=7', logs.output[0])
+        other = EventClient(self.cfg, FakeClient()); other.start()
+        other.create_event('r', 40)
+        with self.assertLogs(level='ERROR') as logs:
+            other.client.message(16)
+            other.abort()
+        self.assertEqual(other.failure_reason, 'unexpected_created')
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn('active_event_id=15 received_event_id=16 pending=True', logs.output[0])
+        other.close()
+
     def test_lifecycle_guards_and_terminal_state(self):
         client = FakeClient(); events = EventClient(self.cfg, client)
         with self.assertRaises(RuntimeError): events.create_event('before-start', 40)
@@ -256,9 +276,68 @@ class AsyncTests(unittest.TestCase):
         self.assertEqual(self.lookups, [15]); self.assertEqual(len(self.fake.published), 2)
     def test_failed_ack_stops_and_no_retry(self):
         self.begin(); self.fake.ack = False
-        with self.assertRaises(RuntimeError): self.step(2, 40)
-        with self.assertRaises(RuntimeError): self.step(4, 40)
+        self.step(2, 40); self.step(4, 40)
+        self.assertEqual(self.controller.state, 'RECOVERING')
         self.assertEqual(len(self.fake.published), 2)
+    def test_recovery_waits_for_worker_terminal_and_new_connection(self):
+        self.begin()
+        replacements = []
+        def reconnect():
+            self.assertFalse(self.controller.busy())
+            self.events.close()
+            fresh = EventClient(self.cfg, FakeClient()); fresh.start()
+            self.controller.integration.events = fresh
+            replacements.append(fresh)
+        self.controller.integration.reconnect = reconnect
+        self.fake.on_disconnect(self.fake, None, None, 1, None)
+        self.step(2, 80); self.step(11, 80)
+        self.assertEqual(replacements, [])
+        self.release.set(); self.controller.job.join(1)
+        self.assertEqual(self.uploads, [])
+        self.step(12, 80); self.assertEqual(replacements, [])
+        self.status = 'ANALYZING'; self.step(14, 80)
+        self.assertEqual(self.controller.state, 'ARMED')
+        self.assertEqual(replacements[0].client.published, [])
+        replacements[0].close()
+
+    def test_unknown_event_holds(self):
+        from proximity_camera.mqtt import MQTTStateError
+        self.controller.state = 'LATCHED'
+        self.controller.job_error = MQTTStateError('event_response_timeout')
+        self.step(0, 40); self.step(12, 40)
+        self.assertEqual(self.controller.state, 'SAFE_HOLD')
+        self.assertEqual(self.fake.published, [])
+
+    def test_transient_lookup_pauses_until_confirmed(self):
+        self.begin(); self.release.set(); self.controller.job.join(1)
+        calls = []
+        def lookup(cfg, event_id):
+            calls.append(event_id)
+            if len(calls) == 1: raise TimeoutError('temporary')
+            return 'ANALYZING'
+        self.controller.status_lookup = lookup
+        self.step(11, 80); self.assertEqual(self.controller.state, 'LATCHED')
+        self.assertFalse(self.controller.vision_allowed.is_set())
+        self.step(11.5, 80); self.assertEqual(len(calls), 1)
+        self.step(12, 80); self.assertEqual(self.controller.state, 'ARMED')
+
+    def test_failed_lookup_does_not_reuse_previous_detected(self):
+        self.begin(); self.release.set(); self.controller.job.join(1)
+        results = iter(['DETECTED', TimeoutError('temporary'), 'DETECTED'])
+        def lookup(cfg, event_id):
+            result = next(results)
+            if isinstance(result, Exception): raise result
+            return result
+        self.controller.status_lookup = lookup
+        self.step(11, 80)
+        self.step(12, 80)
+        self.step(12.5, 40)
+        self.assertEqual(len(self.fake.published), 1)
+        self.step(13, 40)
+        self.assertEqual(len(self.fake.published), 1)
+        self.step(13.5, 40)
+        self.assertEqual(len(self.fake.published), 2)
+
     def test_close_waits_for_job(self):
         self.begin(); self.release.set(); self.controller.close()
         self.assertEqual(self.uploads, [15]); self.assertFalse(self.controller.job.is_alive())
@@ -284,7 +363,7 @@ class SchoolConfigTests(unittest.TestCase):
         cfg = load_config(Path(__file__).resolve().parents[1] / 'config.school.json')
         validate_spring_config(cfg)
         self.assertEqual((cfg['mqtt_host'], cfg['spring_base_url'], cfg['mqtt_client_id']),
-                         ('10.21.33.82', 'http://10.21.33.82:8080', 'doorbell-sensor-camera-1'))
+                         ('10.21.36.38', 'http://10.21.36.38:8080', 'doorbell-sensor-camera-1'))
         with tempfile.TemporaryDirectory() as d:
             file = Path(d) / 'config.json'
             for value in ('', 'bad\nclient', 42, 'x' * 129):

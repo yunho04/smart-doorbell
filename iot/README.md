@@ -240,13 +240,13 @@ python3 -m proximity_camera run --mode mock --spring --config config.local.json 
 python3 -m proximity_camera run --mode hardware --spring --config config.local.json --max-captures 1
 ```
 
-`--spring`을 생략하면 기존 로컬 모드이며 추가 pip 패키지나 네트워크가 필요 없다. `--mode mock --spring`은 모의 센서와 모의 PNG를 사용하지만 MQTT와 HTTP는 **실제 서버**에 요청한다. 기존 개인 설정이 있다면 덮어쓰지 말고 필요한 Spring 항목을 추가한다. `connection_timeout_s`, `event_timeout_s`, `http_timeout_s`는 양의 유한 초 단위이며 최대 120초다. HTTP 제한은 소켓 I/O 작업별 제한으로 전체 요청의 총 경과 시간 상한은 아니다. 자동 HTTP 재시도와 MQTT 재연결·재발행은 하지 않는다.
+`--spring`을 생략하면 기존 로컬 모드이며 추가 pip 패키지나 네트워크가 필요 없다. `--mode mock --spring`은 모의 센서와 모의 PNG를 사용하지만 MQTT와 HTTP는 **실제 서버**에 요청한다. 기존 개인 설정이 있다면 덮어쓰지 말고 필요한 Spring 항목을 추가한다. `connection_timeout_s`, `event_timeout_s`, `http_timeout_s`는 양의 유한 초 단위이며 최대 120초다. HTTP 제한은 소켓 I/O 작업별 제한으로 전체 요청의 총 경과 시간 상한은 아니다. 일시적인 상태 조회 통신 오류는 다시 조회하고 MQTT 연결 장애는 아래 조건에 따라 새 세션으로 복구한다. Event 생성과 이미지 전송은 자동 재시도하지 않는다.
 
 PDF의 이벤트 응답에는 요청 식별자가 없어 사진과 Event ID의 완전한 상관관계를 보장할 수 없다. 같은 deviceId에는 생산자 하나만 운용해야 한다. 이 구현은 한 번에 하나의 이벤트를 처리하고, 시간 초과·연결 단절·불확실한 발행·서로 다른 미확인 Event ID 등 모호한 상태가 발생하면 해당 실행에서 이후 요청을 차단한다. 재시작만으로 늦은 응답이나 서버 중복 생성 문제가 해결된다는 보장은 없다. 완전한 상관관계와 QoS 1 중복 방지를 위해서는 서버와 `request_id` 반환 및 중복 처리 규격을 합의해야 한다. 업로드 결과가 불확실해도 사진은 유지되며 운영자가 서버 상태를 확인해야 한다.
 
 ## 현장 체크리스트: Pi A (2026-11-18)
 
-`config.school.json`은 오늘 전달받은 Spring `10.21.33.82:8080`, MQTT `10.21.33.82:1883`, 장치 1과 Pi A의 클라이언트 ID `doorbell-sensor-camera-1`을 사용한다. 주소는 네트워크가 바뀌면 다시 확인한다. Pi B의 ID `doorbell-audio-speaker-1`과 달라야 한다. 기존 `config.local.json`은 덮어쓰지 않는다. ECHO 직결 이력이 있으므로 전원을 끄고 분압 또는 레벨 변환을 설치한 뒤 실물 시험한다.
+`config.school.json`은 MQTT `10.21.36.38:1883`, Spring HTTP `10.21.36.38:8080`(기존 HTTP 포트 기준), 장치 1과 Pi A의 클라이언트 ID `doorbell-sensor-camera-1`을 사용한다. 주소는 네트워크가 바뀌면 다시 확인한다. Pi B의 ID `doorbell-audio-speaker-1`과 달라야 한다. 기존 `config.local.json`은 덮어쓰지 않는다. ECHO 직결 이력이 있으므로 전원을 끄고 분압 또는 레벨 변환을 설치한 뒤 실물 시험한다.
 
 7. Pi A와 서버가 같은 격리된 LAN에 있는지 확인하고, 카메라와 센서를 각각 단독 시험한 뒤 다음을 실행한다. 시작 로그에서 브로커 주소·클라이언트 ID·`doorbell/1/event` QoS 1 구독 완료를 확인한다.
 
@@ -264,26 +264,26 @@ PDF의 이벤트 응답에는 요청 식별자가 없어 사진과 Event ID의 �
 12. 감지 범위에서 벗어나면 true 발행을 중단한다. Spring은 마지막 true 이후 10초 경과를 기준으로 처리하지만 스케줄러와 AI 호출로 전환이 늦어질 수 있다. 실제 상태를 확인하며 기다린다.
 15. 해당 ID의 이미지 업로드 201 응답과 서버 DB의 사진 연결을 확인한다. Vision 서버의 수신과 분석 결과, `COMPLETED` 전환은 실제 서버에서 별도로 확인해야 한다.
 
-실행 중에는 유효한 근접 측정을 바탕으로 약 2초마다 true를 발행하며, 먼 거리나 측정 오류에서는 중단한다. 촬영·업로드 중에도 센서를 읽는다. 10초 이상 신호가 끊기면 촬영 작업이 끝난 뒤 서버의 해당 이벤트 상태를 조회한다. `DETECTED`라면 같은 방문을 유지하고, 그 외 상태라면 충분한 이탈 측정과 쿨다운 후 새 방문을 허용한다. 서버 상태 조회·발행 실패나 예상 밖 이벤트 ID는 중지하고 운영자가 서버 상태를 확인해야 한다. MQTT 응답에 요청 ID가 없어 서버와의 상태 조회·발행 사이 경쟁 및 중복 생성 방지를 완전히 보장하지 못한다.
+실행 중에는 유효한 근접 측정을 바탕으로 약 2초마다 true를 발행하며, 먼 거리나 측정 오류에서는 중단한다. 촬영·업로드 중에도 센서를 읽는다. 10초 이상 신호가 끊기면 촬영 작업이 끝난 뒤 서버의 해당 이벤트 상태를 조회한다. `DETECTED`라면 같은 방문을 유지하고, 그 외 상태라면 충분한 이탈 측정과 쿨다운 후 새 방문을 허용한다. 상태 조회의 일시적인 통신 오류는 전송을 중단하고 다시 조회한다. 발행 실패는 기존 Event ID를 알고 있을 때 아래 복구 조건을 적용하며, ID가 불명확하거나 예상 밖 이벤트 ID가 오면 안전 대기하고 운영자가 서버 상태를 확인해야 한다. MQTT 응답에 요청 ID가 없어 서버와의 상태 조회·발행 사이 경쟁 및 중복 생성 방지를 완전히 보장하지 못한다.
 
 관찰만 할 때는 앱과 다른 클라이언트 ID를 사용한다.
 
 ```bash
-mosquitto_sub -h 10.21.33.82 -p 1883 -i doorbell-observer-1 -q 1 -v -t 'doorbell/1/#'
+mosquitto_sub -h 10.21.36.38 -p 1883 -i doorbell-observer-1 -q 1 -v -t 'doorbell/1/#'
 ```
 
 앱을 중지한 수동 단독 시험에서만 다음을 사용한다. 실제 이벤트가 생성되므로 서버 담당자와 시험 상태를 맞춘다.
 
 ```bash
-mosquitto_pub -h 10.21.33.82 -p 1883 -q 1 -t doorbell/1/sensor -m '{"deviceId":1,"sensorType":"MOTION","value":1,"presenceDetected":true}'
+mosquitto_pub -h 10.21.36.38 -p 1883 -q 1 -t doorbell/1/sensor -m '{"deviceId":1,"sensorType":"MOTION","value":1,"presenceDetected":true}'
 ```
 
 ### Vision 사진 전송
 
-Spring 모드에서 `vision_base_url`을 설정하면 서버에서 발급한 Event ID로 촬영한 대표 사진을 Spring에 한 번 업로드하고, 성공하면 같은 파일을 `POST /vision/analyze`로 전송한다. 이후 방문 세션 동안 새 사진을 촬영하여 같은 Event ID로 전송한다. `vision_interval_s` 기본값과 현장 설정은 1초이며 양의 유한 값 최대 120초다. 첫 Vision 전송 시작 시각을 기준으로 이후 촬영 목표 시각을 잡고 처리 지연으로 놓친 회차는 건너뛰므로 요청이 겹치거나 밀리지 않는다. 최초 카메라 시작과 자동초점에는 추가 시간이 든다. multipart 필드 이름은 `image`, `event_id`다. 이벤트 ID를 임의로 만들지 않는다. `config.school.json`에는 현장 Vision 주소 `http://10.21.35.77:8000`이 설정되어 있다. 일반 설정의 기본값은 `null`로 비활성화되어 있으며, 필요한 경우 숫자 IP를 포함한 HTTP(S) origin을 명시한다. 예를 들어 개인 설정에 다음 항목을 추가한다.
+Spring 모드에서 `vision_base_url`을 설정하면 서버에서 발급한 Event ID로 촬영한 대표 사진을 Spring에 한 번 업로드하고, 성공하면 같은 파일을 `POST /vision/analyze`로 전송한다. 이후 방문 세션 동안 새 사진을 촬영하여 같은 Event ID로 전송한다. `vision_interval_s` 기본값과 현장 설정은 1초이며 양의 유한 값 최대 120초다. 첫 Vision 전송 시작 시각을 기준으로 이후 촬영 목표 시각을 잡고 처리 지연으로 놓친 회차는 건너뛰므로 요청이 겹치거나 밀리지 않는다. 최초 카메라 시작과 자동초점에는 추가 시간이 든다. multipart 필드 이름은 `image`, `event_id`다. 이벤트 ID를 임의로 만들지 않는다. `config.school.json`에는 현장 Vision 주소 `http://10.21.36.211:8000`이 설정되어 있다. 일반 설정의 기본값은 `null`로 비활성화되어 있으며, 필요한 경우 숫자 IP를 포함한 HTTP(S) origin을 명시한다. 예를 들어 개인 설정에 다음 항목을 추가한다.
 
 ```json
-"vision_base_url": "http://10.21.35.77:8000",
+"vision_base_url": "http://10.21.36.211:8000",
 "vision_timeout_s": 30,
 "vision_interval_s": 1
 ```
@@ -297,3 +297,9 @@ python3 -m proximity_camera run --mode hardware --spring --config config.school.
 ```
 
 실제 Pi에서 연속 촬영, 전송 처리량과 1초 주기는 아직 검증하지 않았다. 이 인터페이스는 제공된 Vision 소스의 요청 형식을 기준으로 구현했으며 실제 배포 서버의 접근과 업로드는 아직 검증하지 않았다. 인증 정보가 제공되지 않아 인증 헤더는 설정하지 않았다.
+
+### MQTT 연결 장애와 방문 세션 복구
+
+방문 중 연결 단절 또는 발행 확인 실패가 발생하면 `RECOVERING` 상태에서 새 촬영과 전송을 중지하고 진행 중인 작업의 종료를 기다린다. Spring 조회에서 기존 Event가 `ANALYZING` 또는 `COMPLETED`로 확인되면 새 MQTT 세션을 연결한다. 유효한 원거리 연속 감지와 쿨다운까지 충족해야 다음 방문을 받는다. 상태 조회의 일시적인 통신 오류는 전송을 멈춘 채 다시 확인한다. 유휴 상태의 연결 단절은 새 세션으로 복구한다.
+
+Event ID를 확인하지 못한 요청이나 예상하지 못한 새 Event 메시지는 `SAFE_HOLD`로 유지하며 운영자 확인이 필요하다. 연결 복구는 Event 생성이나 이미지 전송을 재시도하지 않는다. `--max-captures` 사용 시에도 복구 또는 안전 대기를 성공으로 종료하지 않는다. 실제 장치와 서버에서 이 동작을 검증해야 한다.

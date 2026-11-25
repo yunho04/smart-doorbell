@@ -1,8 +1,8 @@
 {
-  "mqtt_host": "10.21.33.82",
+  "mqtt_host": "10.21.36.38",
   "mqtt_port": 1883,
-  "spring_base_url": "http://10.21.33.82:8080",
-  "vision_base_url": "http://10.21.35.77:8000",
+  "spring_base_url": "http://10.21.36.38:8080",
+  "vision_base_url": "http://10.21.36.211:8000",
   "device_id": 1,
   "event_timeout_s": 5,
   "mqtt_client_id": "doorbell-sensor-camera-1",

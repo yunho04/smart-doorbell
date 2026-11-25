@@ -213,6 +213,25 @@ class PeriodicVisionTests(unittest.TestCase):
         self.assertTrue(all(path.exists() for path in calls))
         self.controller.job_error = None
 
+    def test_mqtt_failure_after_vision_success_is_not_vision_failure(self):
+        for failing_frame in (1, 2):
+            with self.subTest(failing_frame=failing_frame):
+                self.frames.clear()
+                def check():
+                    if len(self.frames) >= failing_frame:
+                        raise RuntimeError('MQTT event state uncertain; intervention required')
+                self.controller.integration.events.check = check
+                with self.assertLogs(level='INFO') as logs:
+                    self.controller._work('request%s' % failing_frame, 40)
+                self.assertEqual(len(self.frames), failing_frame)
+                self.assertEqual(len([x for x in self.sent if isinstance(x, tuple)]), 1)
+                self.assertTrue(any('vision request_id=' in line and 'result=success' in line for line in logs.output))
+                self.assertTrue(any('mqtt request_id=' in line and 'result=failed' in line for line in logs.output))
+                self.assertFalse(any('vision request_id=' in line and 'result=failed' in line for line in logs.output))
+                self.assertTrue(self.frames[-1][1].exists())
+                self.sent.clear()
+                self.controller.job_error = None
+
     def test_slow_vision_never_overlaps_or_catches_up(self):
         starts = []
         def analyze(cfg, event_id, path):

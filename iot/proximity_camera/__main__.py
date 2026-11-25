@@ -66,6 +66,7 @@ def main(argv=None):
             sensor = sensor_class(cfg["trigger_bcm"], cfg["echo_bcm"], cfg["echo_timeout_s"],
                                   settle=cfg["sensor_settle_s"], pulse=cfg["trigger_pulse_s"])
         integration = None
+        failed = False
         try:
             if args.command == "run" and args.spring:
                 from .mqtt import EventClient
@@ -90,17 +91,25 @@ def main(argv=None):
                 else:
                     controller.step(reading)
                     if (args.max_captures and controller.attempts >= args.max_captures and
-                            (not integration or controller.initial_done())):
+                            (not integration or (controller.initial_done() and
+                             getattr(controller, 'state', None) not in ('RECOVERING', 'SAFE_HOLD')))):
                         break
                 time.sleep(cfg["interval_s"])
         except BaseException:
+            failed = True
             if integration and "controller" in locals():
                 controller.cancel()
             raise
         finally:
             try:
                 if integration and "controller" in locals():
-                    controller.close()
+                    if failed:
+                        try:
+                            controller.close(check=False)
+                        except Exception:
+                            logging.exception("controller cleanup failed while handling an earlier error")
+                    else:
+                        controller.close()
             finally:
                 try:
                     if integration:

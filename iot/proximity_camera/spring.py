@@ -9,8 +9,17 @@ from .mqtt import valid_id
 
 
 class SpringIntegration:
-    def __init__(self, config, events):
+    def __init__(self, config, events, event_factory=None):
         self.config, self.events = config, events
+        if event_factory is None:
+            from .mqtt import EventClient
+            event_factory = EventClient
+        self.event_factory = event_factory
+
+    def reconnect(self):
+        self.events.close()
+        self.events = self.event_factory(self.config)
+        self.events.start()
 
     def create_event(self, request_id, distance_cm):
         return self.events.create_event(request_id, distance_cm)
