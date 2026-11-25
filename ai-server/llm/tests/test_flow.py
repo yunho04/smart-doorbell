@@ -252,10 +252,51 @@ def test_auth_when_enabled(monkeypatch):
     assert r.status_code == 202
 
 
-# ---------- 피드백 (후속 단계) ----------
-def test_feedback_adds_case():
+# ---------- 피드백: 사용자 -> Spring -> LLM 서버 -> RAG ----------
+def test_feedback_moves_pending_to_rag():
+    from app.services.pending_store import pending_store
     audio(50, "delivery.wav")
-    features = client.get("/api/v1/events/50/state").json()["features"]
+    finalize(50)
+    assert pending_store.get(50) is not None            # finalize 후 features 한 줄 저장
     before = client.get("/health").json()["rag_cases"]
-    r = client.post("/api/v1/feedback", json={"eventId": 50, "features": features, "userLabel": "NORMAL"})
-    assert r.status_code == 200 and r.json()["totalCases"] == before + 1
+    r = client.post("/api/v1/feedback", json={"eventId": 50, "userLabel": "NORMAL", "memo": "택배 기사"})
+    body = r.json()
+    assert r.status_code == 200 and body["totalCases"] == before + 1 and body["updated"] is False
+    assert pending_store.get(50) is None                 # 사례로 옮긴 뒤 삭제
+    from app.services.rag_store import case_store
+    case = case_store.find_by_event(50)
+    assert case["label"] == "NORMAL" and case["memo"] == "택배 기사" and case["features"]["purpose"] == "DELIVERY"
+
+
+def test_feedback_relabel_updates_existing_case():
+    audio(51, "delivery.wav")
+    finalize(51)
+    first = client.post("/api/v1/feedback", json={"eventId": 51, "userLabel": "NORMAL"}).json()
+    again = client.post("/api/v1/feedback", json={"eventId": 51, "userLabel": "CAUTION"}).json()
+    assert again["updated"] is True and again["caseId"] == first["caseId"]
+    assert again["totalCases"] == first["totalCases"]    # 새로 추가하지 않음
+    from app.services.rag_store import case_store
+    assert case_store.find_by_event(51)["label"] == "CAUTION"
+
+
+def test_feedback_unknown_event_404():
+    r = client.post("/api/v1/feedback", json={"eventId": 9999, "userLabel": "DANGER"})
+    assert r.status_code == 404 and r.json()["error_code"] == "HTTP_404"
+
+
+def test_feedback_bad_label_422():
+    r = client.post("/api/v1/feedback", json={"eventId": 50, "userLabel": "BAD"})
+    assert r.status_code == 422
+
+
+def test_pending_survives_restart_and_expires(monkeypatch, tmp_path):
+    from app.schemas import EventFeatures
+    from app.services import pending_store as ps
+    path = tmp_path / "pending.json"
+    store = ps.PendingStore(path, keep_days=7)
+    f = EventFeatures(hour=14, stay_sec=20)
+    store.save(1, f)
+    assert ps.PendingStore(path, keep_days=7).get(1) == f        # 재시작해도 남아 있음
+    t = ps.now()
+    monkeypatch.setattr(ps, "now", lambda: t + 8 * 86400)        # 8일 뒤
+    assert ps.PendingStore(path, keep_days=7).get(1) is None     # 7일 지나면 삭제

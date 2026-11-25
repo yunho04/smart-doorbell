@@ -145,3 +145,41 @@ def test_groq_stt_error_returns_empty(monkeypatch, tmp_path):
     monkeypatch.setattr(stt_mod, "get_client", lambda: client)
     f = tmp_path / "a.wav"; f.write_bytes(b"x")
     assert GroqSTT().transcribe(f) == ("", 0.0)
+
+
+# ---------- RAG 검색 · 사례 데이터 ----------
+def test_search_prefers_same_vision_signals():
+    """얼굴 가림 + 심야 + 배회 방문이면, 비슷한 위험 사례가 먼저 검색되어야 한다."""
+    from app.services.rag_store import case_store
+    f = EventFeatures(hour=2, stay_sec=170, face_covered=True, vision_risk_level=RiskLevel.HIGH)
+    top = case_store.rank(f)[0]
+    assert top["features"]["face_covered"] is True and top["label"] == "DANGER"
+
+
+def test_search_weapon_case_first():
+    from app.services.rag_store import case_store
+    f = EventFeatures(hour=13, stay_sec=20, weapon_detected=True, vision_risk_level=RiskLevel.HIGH)
+    assert case_store.rank(f)[0]["features"]["weapon_detected"] is True
+
+
+def test_search_balances_labels():
+    from app.services.rag_store import case_store
+    picked = case_store.search(FEAT, k=5)
+    from collections import Counter
+    assert len(picked) == 5
+    assert len({c["label"] for c in picked}) >= 2          # 한 라벨로만 채우지 않음
+
+
+def test_seed_and_eval_data_valid():
+    import json as _json
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / "data"
+    seed = _json.loads((root / "cases.json").read_text(encoding="utf-8"))
+    ev = _json.loads((root / "eval_cases.json").read_text(encoding="utf-8"))
+    assert len(seed) >= 30 and len(ev) >= 20
+    for c in seed:
+        EventFeatures(**c["features"]); assert c["label"] in ("NORMAL", "CAUTION", "DANGER")
+    for c in ev:
+        EventFeatures(**c["features"]); assert c["expected"] in ("LOW", "MEDIUM", "HIGH")
+    seed_keys = {_json.dumps(c["features"], sort_keys=True) for c in seed}
+    assert not any(_json.dumps(c["features"], sort_keys=True) in seed_keys for c in ev)  # 평가 세트는 학습 사례와 겹치지 않음

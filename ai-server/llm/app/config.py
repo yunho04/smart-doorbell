@@ -62,6 +62,10 @@ class Settings:
     CASES_PATH: Path = BASE_DIR / os.getenv("CASES_PATH", "data/cases.json")
     TEMPLATES_PATH: Path = BASE_DIR / "data/reply_templates.json"
 
+    # 피드백 대기 features (finalize 후 저장, 피드백이 오면 RAG 사례로 옮김). storage/는 git에 안 올라감
+    PENDING_PATH: Path = BASE_DIR / os.getenv("PENDING_PATH", "storage/pending_features.json")
+    PENDING_KEEP_DAYS: int = int(os.getenv("PENDING_KEEP_DAYS", "7"))
+
 
 settings = Settings()
 settings.AUDIO_DIR.mkdir(parents=True, exist_ok=True)

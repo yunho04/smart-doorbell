@@ -1,0 +1,644 @@
+[
+  {
+    "eval_id": "eval_001",
+    "memo": "낮 택배",
+    "features": {
+      "hour": 13,
+      "stay_sec": 25,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 25,
+      "package_detected": true,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "LOW",
+      "purpose": "DELIVERY",
+      "purpose_confidence": 0.9
+    },
+    "transcripts": [
+      "택배입니다 문 앞에 놓을게요"
+    ],
+    "vision_reasons": [
+      "택배 상자 보임"
+    ],
+    "expected": "LOW"
+  },
+  {
+    "eval_id": "eval_002",
+    "memo": "전기 점검",
+    "features": {
+      "hour": 10,
+      "stay_sec": 35,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 35,
+      "package_detected": false,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "MEDIUM",
+      "purpose": "REPAIR",
+      "purpose_confidence": 0.9
+    },
+    "transcripts": [
+      "전기 안전 점검 나왔습니다"
+    ],
+    "vision_reasons": [
+      "35초 머묾"
+    ],
+    "expected": "LOW",
+    "review_note": "평범한 방문. 30초 넘게 머문 건 용건을 설명하느라 생긴 시간으로 봄"
+  },
+  {
+    "eval_id": "eval_003",
+    "memo": "헬멧 음식 배달",
+    "features": {
+      "hour": 18,
+      "stay_sec": 20,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 20,
+      "package_detected": true,
+      "face_covered": true,
+      "weapon_detected": false,
+      "vision_risk_level": "MEDIUM",
+      "purpose": "DELIVERY",
+      "purpose_confidence": 0.9
+    },
+    "transcripts": [
+      "치킨 배달 왔습니다"
+    ],
+    "vision_reasons": [
+      "얼굴 가림: helmet",
+      "택배 상자 보임"
+    ],
+    "expected": "LOW",
+    "review_note": "헬멧은 배달 기사 복장. 택배 상자와 배달 목적이 함께 확인되면 얼굴 가림만으로 위험하지 않음"
+  },
+  {
+    "eval_id": "eval_004",
+    "memo": "이웃",
+    "features": {
+      "hour": 15,
+      "stay_sec": 40,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 40,
+      "package_detected": false,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "MEDIUM",
+      "purpose": "VISIT",
+      "purpose_confidence": 0.9
+    },
+    "transcripts": [
+      "윗집에 사는 사람인데요 잠깐 얘기 좀"
+    ],
+    "vision_reasons": [
+      "40초 머묾"
+    ],
+    "expected": "LOW",
+    "review_note": "평범한 방문. 30초 넘게 머문 건 용건을 설명하느라 생긴 시간으로 봄"
+  },
+  {
+    "eval_id": "eval_005",
+    "memo": "상자만 두고 감",
+    "features": {
+      "hour": 11,
+      "stay_sec": 15,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": false,
+      "person_count": 1,
+      "person_visible_sec": 15,
+      "package_detected": true,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "LOW",
+      "purpose": "UNKNOWN",
+      "purpose_confidence": 0.3
+    },
+    "transcripts": [],
+    "vision_reasons": [
+      "택배 상자 보임"
+    ],
+    "expected": "LOW"
+  },
+  {
+    "eval_id": "eval_006",
+    "memo": "관리실",
+    "features": {
+      "hour": 19,
+      "stay_sec": 30,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 30,
+      "package_detected": false,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "MEDIUM",
+      "purpose": "REPAIR",
+      "purpose_confidence": 0.9
+    },
+    "transcripts": [
+      "관리사무소에서 왔습니다"
+    ],
+    "vision_reasons": [
+      "30초 머묾"
+    ],
+    "expected": "LOW",
+    "review_note": "평범한 방문. 30초 넘게 머문 건 용건을 설명하느라 생긴 시간으로 봄"
+  },
+  {
+    "eval_id": "eval_007",
+    "memo": "종교 권유",
+    "features": {
+      "hour": 16,
+      "stay_sec": 25,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 25,
+      "package_detected": false,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "LOW",
+      "purpose": "OTHER",
+      "purpose_confidence": 0.9
+    },
+    "transcripts": [
+      "교회에서 나왔어요"
+    ],
+    "vision_reasons": [],
+    "expected": "LOW"
+  },
+  {
+    "eval_id": "eval_008",
+    "memo": "밤 9시 택배",
+    "features": {
+      "hour": 21,
+      "stay_sec": 30,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 30,
+      "package_detected": true,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "LOW",
+      "purpose": "DELIVERY",
+      "purpose_confidence": 0.9
+    },
+    "transcripts": [
+      "로켓배송입니다"
+    ],
+    "vision_reasons": [
+      "택배 상자 보임"
+    ],
+    "expected": "LOW"
+  },
+  {
+    "eval_id": "eval_009",
+    "memo": "서명 대기",
+    "features": {
+      "hour": 12,
+      "stay_sec": 70,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 70,
+      "package_detected": true,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "LOW",
+      "purpose": "DELIVERY",
+      "purpose_confidence": 0.9
+    },
+    "transcripts": [
+      "택배 수령 서명 부탁드려요"
+    ],
+    "vision_reasons": [
+      "택배 상자 보임"
+    ],
+    "expected": "LOW"
+  },
+  {
+    "eval_id": "eval_010",
+    "memo": "짧게 지나감",
+    "features": {
+      "hour": 14,
+      "stay_sec": 10,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": false,
+      "person_count": 1,
+      "person_visible_sec": 10,
+      "package_detected": false,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "LOW",
+      "purpose": "UNKNOWN",
+      "purpose_confidence": 0.3
+    },
+    "transcripts": [],
+    "vision_reasons": [],
+    "expected": "LOW"
+  },
+  {
+    "eval_id": "eval_011",
+    "memo": "낮 말없이 2분 반",
+    "features": {
+      "hour": 17,
+      "stay_sec": 150,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": false,
+      "person_count": 1,
+      "person_visible_sec": 150,
+      "package_detected": false,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "MEDIUM",
+      "purpose": "UNKNOWN",
+      "purpose_confidence": 0.3
+    },
+    "transcripts": [],
+    "vision_reasons": [
+      "150초 머묾"
+    ],
+    "expected": "MEDIUM"
+  },
+  {
+    "eval_id": "eval_012",
+    "memo": "밤 11시 호수 물음",
+    "features": {
+      "hour": 23,
+      "stay_sec": 30,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 30,
+      "package_detected": false,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "MEDIUM",
+      "purpose": "UNKNOWN",
+      "purpose_confidence": 0.3
+    },
+    "transcripts": [
+      "여기 몇 호예요"
+    ],
+    "vision_reasons": [
+      "30초 머묾"
+    ],
+    "expected": "MEDIUM"
+  },
+  {
+    "eval_id": "eval_013",
+    "memo": "헬멧, 말 없음",
+    "features": {
+      "hour": 14,
+      "stay_sec": 35,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": false,
+      "person_count": 1,
+      "person_visible_sec": 35,
+      "package_detected": false,
+      "face_covered": true,
+      "weapon_detected": false,
+      "vision_risk_level": "HIGH",
+      "purpose": "UNKNOWN",
+      "purpose_confidence": 0.3
+    },
+    "transcripts": [],
+    "vision_reasons": [
+      "얼굴 가림: helmet",
+      "35초 머묾"
+    ],
+    "expected": "MEDIUM",
+    "review_note": "목적 없이 헬멧을 쓰고 서 있음. 위험 신호는 부족하지만 확인 필요"
+  },
+  {
+    "eval_id": "eval_014",
+    "memo": "새벽 3시 택배",
+    "features": {
+      "hour": 3,
+      "stay_sec": 20,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 20,
+      "package_detected": true,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "LOW",
+      "purpose": "DELIVERY",
+      "purpose_confidence": 0.9
+    },
+    "transcripts": [
+      "택배요"
+    ],
+    "vision_reasons": [
+      "택배 상자 보임"
+    ],
+    "expected": "LOW",
+    "review_note": "새벽배송은 흔함. 상자와 택배 목적이 확인되면 정상"
+  },
+  {
+    "eval_id": "eval_015",
+    "memo": "택배 들고 4분",
+    "features": {
+      "hour": 20,
+      "stay_sec": 240,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 240,
+      "package_detected": true,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "LOW",
+      "purpose": "DELIVERY",
+      "purpose_confidence": 0.9
+    },
+    "transcripts": [
+      "배송 왔는데요"
+    ],
+    "vision_reasons": [
+      "택배 상자 보임"
+    ],
+    "expected": "MEDIUM"
+  },
+  {
+    "eval_id": "eval_016",
+    "memo": "사람 있는지 떠봄",
+    "features": {
+      "hour": 15,
+      "stay_sec": 50,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 50,
+      "package_detected": false,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "MEDIUM",
+      "purpose": "UNKNOWN",
+      "purpose_confidence": 0.3
+    },
+    "transcripts": [
+      "안에 누구 계세요? 아무도 없죠?"
+    ],
+    "vision_reasons": [
+      "50초 머묾"
+    ],
+    "expected": "MEDIUM"
+  },
+  {
+    "eval_id": "eval_017",
+    "memo": "하루 2번째 접근",
+    "features": {
+      "hour": 12,
+      "stay_sec": 60,
+      "repeat_24h": 2,
+      "shock_count": 0,
+      "doorbell_pressed": false,
+      "person_count": 1,
+      "person_visible_sec": 60,
+      "package_detected": false,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "MEDIUM",
+      "purpose": "UNKNOWN",
+      "purpose_confidence": 0.3
+    },
+    "transcripts": [],
+    "vision_reasons": [
+      "60초 머묾"
+    ],
+    "expected": "MEDIUM"
+  },
+  {
+    "eval_id": "eval_018",
+    "memo": "새벽 친구 주장",
+    "features": {
+      "hour": 1,
+      "stay_sec": 30,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 30,
+      "package_detected": false,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "MEDIUM",
+      "purpose": "VISIT",
+      "purpose_confidence": 0.9
+    },
+    "transcripts": [
+      "친구인데요"
+    ],
+    "vision_reasons": [
+      "30초 머묾"
+    ],
+    "expected": "MEDIUM"
+  },
+  {
+    "eval_id": "eval_019",
+    "memo": "새벽 얼굴 가림 배회",
+    "features": {
+      "hour": 2,
+      "stay_sec": 200,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": false,
+      "person_count": 1,
+      "person_visible_sec": 200,
+      "package_detected": false,
+      "face_covered": true,
+      "weapon_detected": false,
+      "vision_risk_level": "HIGH",
+      "purpose": "UNKNOWN",
+      "purpose_confidence": 0.3
+    },
+    "transcripts": [],
+    "vision_reasons": [
+      "얼굴 가림: helmet",
+      "200초 머묾"
+    ],
+    "expected": "HIGH"
+  },
+  {
+    "eval_id": "eval_020",
+    "memo": "흉기",
+    "features": {
+      "hour": 16,
+      "stay_sec": 15,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": false,
+      "person_count": 1,
+      "person_visible_sec": 15,
+      "package_detected": false,
+      "face_covered": false,
+      "weapon_detected": true,
+      "vision_risk_level": "HIGH",
+      "purpose": "UNKNOWN",
+      "purpose_confidence": 0.3
+    },
+    "transcripts": [],
+    "vision_reasons": [
+      "흉기 의심: knife"
+    ],
+    "expected": "HIGH"
+  },
+  {
+    "eval_id": "eval_021",
+    "memo": "새벽 점검 주장",
+    "features": {
+      "hour": 3,
+      "stay_sec": 45,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 45,
+      "package_detected": false,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "MEDIUM",
+      "purpose": "REPAIR",
+      "purpose_confidence": 0.9
+    },
+    "transcripts": [
+      "수도 점검 왔어요"
+    ],
+    "vision_reasons": [
+      "45초 머묾"
+    ],
+    "expected": "HIGH"
+  },
+  {
+    "eval_id": "eval_022",
+    "memo": "얼굴 가림 + 판정 회피",
+    "features": {
+      "hour": 22,
+      "stay_sec": 120,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 120,
+      "package_detected": false,
+      "face_covered": true,
+      "weapon_detected": false,
+      "vision_risk_level": "HIGH",
+      "purpose": "UNKNOWN",
+      "purpose_confidence": 0.3
+    },
+    "transcripts": [
+      "아무한테도 알리지 마세요"
+    ],
+    "vision_reasons": [
+      "얼굴 가림: helmet",
+      "120초 머묾"
+    ],
+    "expected": "HIGH"
+  },
+  {
+    "eval_id": "eval_023",
+    "memo": "새벽 반복 접근",
+    "features": {
+      "hour": 5,
+      "stay_sec": 90,
+      "repeat_24h": 3,
+      "shock_count": 0,
+      "doorbell_pressed": false,
+      "person_count": 1,
+      "person_visible_sec": 90,
+      "package_detected": false,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "MEDIUM",
+      "purpose": "UNKNOWN",
+      "purpose_confidence": 0.3
+    },
+    "transcripts": [],
+    "vision_reasons": [
+      "90초 머묾"
+    ],
+    "expected": "HIGH"
+  },
+  {
+    "eval_id": "eval_024",
+    "memo": "택배라는데 흉기",
+    "features": {
+      "hour": 13,
+      "stay_sec": 30,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 30,
+      "package_detected": true,
+      "face_covered": false,
+      "weapon_detected": true,
+      "vision_risk_level": "HIGH",
+      "purpose": "DELIVERY",
+      "purpose_confidence": 0.9
+    },
+    "transcripts": [
+      "배달 왔습니다"
+    ],
+    "vision_reasons": [
+      "흉기 의심: knife",
+      "택배 상자 보임"
+    ],
+    "expected": "HIGH"
+  },
+  {
+    "eval_id": "eval_025",
+    "memo": "자정 3분 문 열라고",
+    "features": {
+      "hour": 0,
+      "stay_sec": 180,
+      "repeat_24h": 0,
+      "shock_count": 0,
+      "doorbell_pressed": true,
+      "person_count": 1,
+      "person_visible_sec": 180,
+      "package_detected": false,
+      "face_covered": false,
+      "weapon_detected": false,
+      "vision_risk_level": "MEDIUM",
+      "purpose": "UNKNOWN",
+      "purpose_confidence": 0.3
+    },
+    "transcripts": [
+      "문 좀 열어 주세요 급해요"
+    ],
+    "vision_reasons": [
+      "180초 머묾"
+    ],
+    "expected": "HIGH",
+    "review_note": "자정에 3분간 문을 열라고 요구. 급한 사정이라도 거주자가 바로 확인해야 하는 상황"
+  }
+]

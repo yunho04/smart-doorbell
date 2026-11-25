@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.routers import events, feedback, vision
 from app.services.llm import llm
+from app.services.pending_store import pending_store
 from app.services.rag_store import case_store
 from app.services.stt import stt
 
@@ -33,6 +34,7 @@ def health():
         "stt": stt.name,
         "llm": llm.model_name,
         "rag_cases": len(case_store),
+        "pending_feedback": len(pending_store),
         "spring_base_url": settings.SPRING_BASE_URL,
     }
 

@@ -78,7 +78,7 @@ Vision·STT 결과는 Spring을 거치지 않고 LLM 서버가 eventId별로 보
 | `POST /api/v1/events/{id}/audio` | Pi B | multipart: `file` (wav 권장) | 텍스트, 방문 목적, `responseCode`, `sentToSpring` 등 | AI 내부 규약 |
 | `GET /api/v1/events/{id}/state` | 디버깅용 | - | 보관 중인 프레임 수, 발화, 대표 프레임, 피처 | - |
 | `GET /health` | 누구나 | - | 상태, Spring 주소 | - |
-| `POST /api/v1/feedback` | Spring (후속 단계) | `eventId`, `features`, `userLabel` | 사례 ID | MVP 범위 밖 |
+| `POST /api/v1/feedback` | Spring | `eventId`, `userLabel`(NORMAL/CAUTION/DANGER), `memo`(선택) | `caseId`, `totalCases`, `updated` | features는 finalize 때 서버가 저장해 둔 값 사용. 없으면 404 |
 
 ### AI 서버가 Spring으로 보내는 요청
 
@@ -141,7 +141,7 @@ app/
 ├─ routers/
 │  ├─ vision.py         POST /vision/result (Vision 담당 형식)
 │  ├─ events.py         finalize, audio, state
-│  └─ feedback.py       후속 단계용
+│  └─ feedback.py       사용자 평가 -> RAG 사례 추가
 └─ services/
    ├─ stt.py            음성 → 텍스트 (MockSTT → WhisperSTT)
    ├─ llm.py            목적 분류·위험도·요약 (MockLLM → RealLLM)

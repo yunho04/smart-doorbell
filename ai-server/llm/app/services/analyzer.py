@@ -14,6 +14,7 @@ from app.schemas import EventFeatures, Purpose, RiskLevel, SpringResultRequest
 from app.services.event_cache import EventData, event_cache
 from app.services.llm import llm
 from app.services.rag_store import case_store
+from app.services.pending_store import pending_store
 from app.services.spring_client import send_result
 from app.services.vision_client import send_representative
 
@@ -105,6 +106,7 @@ def analyze(event_id: int) -> tuple[SpringResultRequest, dict]:
         "model": out.get("model_name"),
         "referenced_case_ids": [c["case_id"] for c in examples],
         "best_frame_no": select_best_frame(data),
+        "features": features,
     }
     return SpringResultRequest(risk_level=final_level, summary=summary,
                                response_code=last.response_code if last else None,
@@ -117,6 +119,9 @@ def finalize_event(event_id: int) -> bool:
     log.info("최종 분석 eventId=%s risk=%s (vision=%s, llm=%s, model=%s) reason=%s 참조사례=%s 대표프레임=%s",
              event_id, result.risk_level.value, d.get("vision_level"), d.get("llm_level"), d.get("model"),
              d["reason"], d["referenced_case_ids"], d["best_frame_no"])
+    # 사용자 피드백이 오면 RAG 사례로 옮길 수 있게 features 한 줄만 파일에 남긴다
+    if d.get("features") is not None:
+        pending_store.save(event_id, d["features"])
     sent = send_result(event_id, result)
     # 대표 사진: LLM이 고른 frame_no를 Vision에 보내면 Vision이 Spring /image로 원본 업로드
     if d["best_frame_no"] is not None:

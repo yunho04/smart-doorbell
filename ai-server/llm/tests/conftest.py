@@ -12,6 +12,7 @@ _tmp = Path(tempfile.mkdtemp())
 shutil.copy(ROOT / "data/cases.json", _tmp / "cases.json")
 os.environ["CASES_PATH"] = str(_tmp / "cases.json")
 os.environ["AUDIO_DIR"] = str(_tmp / "audio")
+os.environ["PENDING_PATH"] = str(_tmp / "pending_features.json")
 
 # MVP v1처럼 인증 없이 테스트 (인증 테스트는 개별로 켬)
 os.environ["DEVICE_KEYS"] = ""

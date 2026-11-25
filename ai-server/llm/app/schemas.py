@@ -147,15 +147,16 @@ class EventFeatures(CamelModel):
 
 
 class FeedbackRequest(CamelModel):
-    """후속 단계용 (MVP 명세에는 없음)"""
+    """Spring -> LLM : 사용자가 앱에서 남긴 평가. features는 LLM 서버가 finalize 때 저장해 둔 값을 쓴다."""
     event_id: int
-    features: EventFeatures
     user_label: UserLabel
+    memo: str | None = Field(default=None, max_length=200)
 
 
 class FeedbackResponse(CamelModel):
     case_id: str
     total_cases: int
+    updated: bool = False   # 같은 eventId에 다시 평가가 와서 기존 사례 라벨만 바꾼 경우 true
 
 
 class EventState(CamelModel):
