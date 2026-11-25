@@ -1,7 +1,7 @@
 """Manage a Spring visit while sensor reads and camera uploads run independently."""
 import http.client
 import logging
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 import math
 import threading
 import time
@@ -11,6 +11,9 @@ from .camera import AutofocusFailed, CameraSessionCancelled
 from .spring import get_event_status
 from .mqtt import MQTTStateError
 from .vision import analyze_image
+
+
+AUTOFOCUS_RETRY_DELAY_S = 1.0
 
 
 def _next_slot(previous, now, interval):
@@ -58,7 +61,54 @@ class AsyncSpringController:
                 return
             enabled = bool(self.config['vision_base_url'])
             stage = 'capture'
-            with (self.camera.session(self.stopping) if enabled else nullcontext(self.camera)) as camera:
+            with ExitStack() as stack:
+                attempt = 1
+                last_autofocus_error = None
+                while True:
+                    try:
+                        camera = stack.enter_context(self.camera.session(self.stopping) if enabled else nullcontext(self.camera))
+                        break
+                    except AutofocusFailed as exc:
+                        last_autofocus_error = exc
+                        if not enabled:
+                            raise
+                        deadline = time.monotonic() + AUTOFOCUS_RETRY_DELAY_S
+                        while True:
+                            if (self.stopping.is_set() or self.session_ended.is_set() or
+                                    self.periodic_stop.is_set() or self.terminal):
+                                raise
+                            remaining = deadline - time.monotonic()
+                            if remaining > 0:
+                                self.periodic_stop.wait(min(.1, remaining))
+                                continue
+                            if not self.vision_allowed.wait(.1):
+                                continue
+                            stage = 'mqtt'
+                            self.integration.events.check()
+                            stage = 'capture'
+                            if (self.stopping.is_set() or self.session_ended.is_set() or
+                                    self.periodic_stop.is_set() or self.terminal):
+                                raise
+                            if self.vision_allowed.is_set():
+                                break
+                        attempt += 1
+                        logging.warning('capture request_id=%s event_id=%s result=retrying reason=autofocus_failed attempt=%s', request_id, event_id, attempt)
+                # A pause or stop may have arrived while the camera was starting.
+                if enabled and attempt > 1:
+                    while True:
+                        if (self.stopping.is_set() or self.session_ended.is_set() or
+                                self.periodic_stop.is_set() or self.terminal):
+                            raise last_autofocus_error
+                        if not self.vision_allowed.wait(.1):
+                            continue
+                        stage = 'mqtt'
+                        self.integration.events.check()
+                        stage = 'capture'
+                        if (self.stopping.is_set() or self.session_ended.is_set() or
+                                self.periodic_stop.is_set() or self.terminal):
+                            raise last_autofocus_error
+                        if self.vision_allowed.is_set():
+                            break
                 if self.stopping.is_set() or self.session_ended.is_set():
                     return
                 path = camera.capture(request_id)

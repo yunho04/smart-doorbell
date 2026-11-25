@@ -342,33 +342,171 @@ class AsyncTests(unittest.TestCase):
         from proximity_camera.camera import AutofocusFailed
         from contextlib import contextmanager
         attempts = []
+        failed = threading.Event()
         @contextmanager
         def session(stopping):
             attempts.append(1)
-            if len(attempts) == 1:
+            if self.controller.event_id == 15:
+                if len(attempts) >= 3: failed.set()
                 raise AutofocusFailed('autofocus failed')
             yield self.controller.camera
         self.controller.config['vision_base_url'] = 'http://127.0.0.1:8000'
         self.controller.camera.session = session
-        with patch.object(self.controller.integration, 'abort') as abort, \
+        with patch('proximity_camera.async_controller.AUTOFOCUS_RETRY_DELAY_S', .001), \
+             patch.object(self.controller.integration, 'abort') as abort, \
              patch('proximity_camera.async_controller.analyze_image') as vision:
-            self.step(0, 40); self.controller.job.join(2)
-            self.assertEqual(self.controller.event_id, 15)
-            self.assertEqual(self.controller.state, 'LATCHED')
+            self.step(0, 40)
+            self.assertTrue(failed.wait(1))
+            self.status = 'ANALYZING'; self.step(11, 80)
+            self.controller.job.join(1)
             self.assertTrue(self.controller.initial_done())
+            self.assertEqual(self.controller.failures, 1)
             self.assertEqual(self.uploads, [])
-            abort.assert_not_called(); vision.assert_not_called()
-            self.step(2, 40)
-            self.assertEqual(len(self.fake.published), 2)
-            self.status = 'ANALYZING'; self.step(12, 80)
+            self.step(12, 80)
             self.assertEqual(self.controller.state, 'ARMED')
             self.fake.respond = 16
+            self.controller.max_attempts = 2
             self.release.set(); self.step(13, 40)
-            self.controller.job.join(.5)
+            self.controller.job.join(1)
             self.assertEqual(self.uploads, [16])
             self.assertEqual(vision.call_count, 1)
             abort.assert_not_called()
             self.controller.close()
+
+    def test_autofocus_retry_succeeds_in_same_visit(self):
+        from proximity_camera.camera import AutofocusFailed
+        from contextlib import contextmanager
+        attempts = []
+        @contextmanager
+        def session(stopping):
+            attempts.append(1)
+            if len(attempts) <= 3:
+                raise AutofocusFailed('autofocus failed')
+            yield self.controller.camera
+        self.controller.config['vision_base_url'] = 'http://127.0.0.1:8000'
+        self.controller.max_attempts = 1
+        self.controller.camera.session = session
+        self.release.set()
+        with patch('proximity_camera.async_controller.AUTOFOCUS_RETRY_DELAY_S', 0), \
+             patch('proximity_camera.async_controller.analyze_image') as vision:
+            self.step(0, 40); self.controller.job.join(2)
+            self.assertEqual(len(attempts), 4)
+            self.assertEqual(self.uploads, [15])
+            self.assertEqual(len(self.fake.published), 1)
+            vision.assert_called_once_with(self.controller.config, 15, 'photo.jpg')
+            self.assertEqual(self.controller.failures, 0)
+            self.controller.close()
+
+    def test_autofocus_retry_stops_for_visit_end_or_cancellation(self):
+        from proximity_camera.camera import AutofocusFailed
+        from contextlib import contextmanager
+        self.controller.config['vision_base_url'] = 'http://127.0.0.1:8000'
+        for flag in ('stopping', 'session_ended', 'periodic_stop', 'terminal'):
+            with self.subTest(flag=flag):
+                attempts = []
+                @contextmanager
+                def session(stopping):
+                    attempts.append(1)
+                    if flag == 'terminal': self.controller.terminal = True
+                    else: getattr(self.controller, flag).set()
+                    raise AutofocusFailed('autofocus failed')
+                    yield
+                self.controller.camera.session = session
+                with patch.object(self.controller.integration, 'create_event', return_value=15):
+                    self.controller._work('request', 40)
+                self.assertEqual(len(attempts), 1)
+                self.assertEqual(self.uploads, [])
+                self.assertEqual(self.controller.failures, 1)
+                if flag == 'terminal': self.controller.terminal = False
+                else: getattr(self.controller, flag).clear()
+                self.controller.initial_complete.clear()
+
+    def test_autofocus_retry_waits_for_gate_and_can_be_stopped(self):
+        from proximity_camera.camera import AutofocusFailed
+        from contextlib import contextmanager
+        attempts = []
+        failed = threading.Event()
+        @contextmanager
+        def session(stopping):
+            attempts.append(1)
+            self.controller.vision_allowed.clear()
+            failed.set()
+            raise AutofocusFailed('autofocus failed')
+            yield
+        self.controller.config['vision_base_url'] = 'http://127.0.0.1:8000'
+        self.controller.camera.session = session
+        self.step(0, 40)
+        self.assertTrue(failed.wait(1))
+        self.assertFalse(self.controller.initial_complete.wait(.15))
+        self.assertEqual(len(attempts), 1)
+        self.controller.periodic_stop.set()
+        self.controller.job.join(1)
+        self.assertFalse(self.controller.job.is_alive())
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(self.uploads, [])
+
+    def test_gate_or_end_during_successful_retry(self):
+        from proximity_camera.camera import AutofocusFailed
+        from contextlib import contextmanager
+        for ending in (True, False):
+            with self.subTest(ending=ending):
+                started, resume = threading.Event(), threading.Event()
+                attempts = []
+                @contextmanager
+                def session(stopping):
+                    attempts.append(1)
+                    if len(attempts) == 1:
+                        raise AutofocusFailed('autofocus failed')
+                    started.set()
+                    self.assertTrue(resume.wait(1))
+                    yield self.controller.camera
+                self.controller.config['vision_base_url'] = 'http://127.0.0.1:8000'
+                self.controller.max_attempts = 1
+                self.controller.attempts = 1
+                self.controller.camera.session = session
+                self.release.set()
+                with patch('proximity_camera.async_controller.AUTOFOCUS_RETRY_DELAY_S', 0), \
+                     patch('proximity_camera.async_controller.analyze_image') as vision, \
+                     patch.object(self.controller.integration, 'create_event', return_value=15):
+                    job = threading.Thread(target=self.controller._work, args=('request', 40))
+                    job.start()
+                    self.assertTrue(started.wait(1))
+                    self.controller.vision_allowed.clear()
+                    if ending: self.controller.session_ended.set()
+                    resume.set()
+                    if not ending:
+                        self.assertFalse(self.capturing.wait(.1))
+                        self.controller.vision_allowed.set()
+                    job.join(1)
+                    self.assertFalse(job.is_alive())
+                    self.assertEqual(len(attempts), 2)
+                    if ending:
+                        self.assertEqual(self.uploads, [])
+                        self.assertEqual(self.controller.failures, 1)
+                        self.assertTrue(self.controller.initial_done())
+                        vision.assert_not_called()
+                    else:
+                        self.assertEqual(self.uploads, [15])
+                        vision.assert_called_once()
+                self.controller.session_ended.clear()
+                self.controller.initial_complete.clear()
+                self.controller.failures = 0
+                self.controller.vision_allowed.set()
+
+    def test_other_camera_startup_errors_are_not_retried(self):
+        from contextlib import contextmanager
+        attempts = []
+        @contextmanager
+        def session(stopping):
+            attempts.append(1)
+            raise TimeoutError('camera startup timeout')
+            yield
+        self.controller.config['vision_base_url'] = 'http://127.0.0.1:8000'
+        self.controller.camera.session = session
+        self.step(0, 40); self.controller.job.join(2)
+        self.assertEqual(len(attempts), 1)
+        self.assertIsInstance(self.controller.job_error, TimeoutError)
+        self.assertEqual(self.uploads, [])
 
     def test_final_autofocus_failure_remains_visible_after_rearm_check(self):
         from proximity_camera.camera import AutofocusFailed
@@ -380,8 +518,10 @@ class AsyncTests(unittest.TestCase):
         self.controller.config['vision_base_url'] = 'http://127.0.0.1:8000'
         self.controller.max_attempts = 1
         self.controller.camera.session = session
-        self.step(0, 40); self.controller.job.join(2)
+        self.step(0, 40)
         self.status = 'ANALYZING'; self.step(11, 80)
+        self.controller.job.join(2)
+        self.step(12, 80)
         self.assertTrue(self.controller.initial_done())
         self.assertEqual(self.controller.failures, 1)
         self.assertEqual(self.controller.attempts, 1)
@@ -472,16 +612,27 @@ class MaxCapturesCLITests(unittest.TestCase):
         from proximity_camera.camera import AutofocusFailed
         from contextlib import contextmanager
         from unittest.mock import MagicMock
+        failed = threading.Event()
         class Sensor:
-            def __init__(self, *args): pass
-            def read(self): return Reading(40, 0, None)
+            def __init__(self, *args): self.reads = 0
+            def read(self):
+                self.reads += 1
+                if self.reads == 1: return Reading(40, 0, None)
+                failed.wait(1)
+                return Reading(80, 0, None)
             def close(self): pass
         class Camera:
             def __init__(self, *args): pass
             @contextmanager
             def session(self, stopping):
+                failed.set()
                 raise AutofocusFailed('autofocus failed')
                 yield
+        from proximity_camera.async_controller import AsyncSpringController
+        ticks = iter(range(0, 1000000, 11))
+        def make_controller(*args, **kwargs):
+            return AsyncSpringController(*args, clock=lambda: next(ticks),
+                                         status_lookup=lambda cfg, event_id: 'ANALYZING', **kwargs)
         cfg = dict(DEFAULTS, consecutive=1, interval_s=.001, mqtt_host='127.0.0.1',
                    spring_base_url='http://127.0.0.1:8080', vision_base_url='http://127.0.0.1:8000')
         integration = MagicMock()
@@ -489,6 +640,7 @@ class MaxCapturesCLITests(unittest.TestCase):
         with patch('proximity_camera.__main__.load_config', return_value=cfg), \
              patch('proximity_camera.__main__.MockSensor', Sensor), \
              patch('proximity_camera.__main__.Camera', Camera), \
+             patch('proximity_camera.async_controller.AsyncSpringController', make_controller), \
              patch('proximity_camera.mqtt.EventClient', return_value=MagicMock()), \
              patch('proximity_camera.spring.SpringIntegration', return_value=integration):
             self.assertEqual(main(['run', '--mode', 'mock', '--spring', '--max-captures', '1']), 1)
