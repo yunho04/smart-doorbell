@@ -1,0 +1,175 @@
+package com.smartdoorbell.backend.event.service;
+
+import com.smartdoorbell.backend.device.entity.Device;
+import com.smartdoorbell.backend.device.repository.DeviceRepository;
+import com.smartdoorbell.backend.event.EventNotFoundException;
+import com.smartdoorbell.backend.event.dto.EventResultRequest;
+import com.smartdoorbell.backend.event.entity.Event;
+import com.smartdoorbell.backend.event.repository.EventRepository;
+import com.smartdoorbell.backend.eventresponse.entity.EventResponseHistory;
+import com.smartdoorbell.backend.eventresponse.repository.EventResponseHistoryRepository;
+import com.smartdoorbell.backend.mqtt.dto.MqttEventMessage;
+import com.smartdoorbell.backend.mqtt.dto.MqttResponseMessage;
+import com.smartdoorbell.backend.mqtt.service.MqttPublisher;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Service
+@Transactional
+public class EventService {
+
+    private static final String DETECTED = "DETECTED";
+    private static final long INACTIVITY_SECONDS = 10;
+
+    private final MqttPublisher mqttPublisher;
+    private final EventRepository eventRepository;
+    private final DeviceRepository deviceRepository;
+    private final EventResponseHistoryRepository eventResponseHistoryRepository;
+
+    public EventService(
+            EventRepository eventRepository,
+            DeviceRepository deviceRepository,
+            EventResponseHistoryRepository eventResponseHistoryRepository,
+            MqttPublisher mqttPublisher
+    ) {
+        this.mqttPublisher = mqttPublisher;
+        this.eventRepository = eventRepository;
+        this.deviceRepository = deviceRepository;
+        this.eventResponseHistoryRepository = eventResponseHistoryRepository;
+    }
+
+    // 1. 새로운 Event 생성
+    public Event createEvent(Long deviceId) {
+
+        Device device = deviceRepository.findById(deviceId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException("Device not found: " + deviceId)
+                );
+
+        Event event = new Event(device);
+
+        return eventRepository.save(event);
+    }
+
+    public void detectPresence(Long deviceId) {
+        // Serialize sensor-driven creation even when no active event exists yet.
+        Device device = deviceRepository.findLockedById(deviceId)
+                .orElseThrow(() -> new IllegalArgumentException("Device not found: " + deviceId));
+
+        Event activeEvent = eventRepository
+                .findFirstByDeviceIdAndStatusOrderByStartedAtDescIdDesc(deviceId, DETECTED)
+                .orElse(null);
+        if (activeEvent != null) {
+            activeEvent.updateLastDetectedAt();
+            return;
+        }
+
+        Event event = eventRepository.save(new Event(device));
+        mqttPublisher.publishAfterCommit(
+                "doorbell/" + deviceId + "/event",
+                new MqttEventMessage(event.getId(), "CREATED")
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public List<Long> findInactiveEventIds() {
+        return eventRepository.findInactiveIds(DETECTED, LocalDateTime.now().minusSeconds(INACTIVITY_SECONDS));
+    }
+
+    public boolean startAnalysisIfInactive(Long eventId) {
+        Event event = eventRepository.findLockedById(eventId).orElse(null);
+        if (event == null || !DETECTED.equals(event.getStatus())) {
+            return false;
+        }
+
+        LocalDateTime lastDetection = event.getLastDetectedAt();
+        if (lastDetection == null) {
+            lastDetection = event.getStartedAt();
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        if (lastDetection.isAfter(now.minusSeconds(INACTIVITY_SECONDS))) {
+            return false;
+        }
+
+        event.startAnalysis(now);
+        mqttPublisher.publishAfterCommit(
+                "doorbell/" + event.getDevice().getId() + "/event",
+                new MqttEventMessage(eventId, "ENDED")
+        );
+        return true;
+    }
+
+    // 2. Event 조회
+    @Transactional(readOnly = true)
+    public Event getEvent(Long eventId) {
+
+        return eventRepository.findById(eventId)
+                .orElseThrow(() -> new EventNotFoundException(eventId));
+    }
+
+    // 3. LLM 최종 결과 저장
+    public Event completeEvent(Long eventId, EventResultRequest request) {
+        Event event = eventRepository.findLockedById(eventId)
+                .orElseThrow(() -> new EventNotFoundException(eventId));
+
+        event.complete(
+                request.riskLevel(),
+                request.summary(),
+                request.responseCode(),
+                request.responseText()
+        );
+        String purpose = request.purpose();
+        String conversationSummary = request.conversationSummary();
+        if (request.conversation() == null && request.responses() == null) {
+            event.updateConversationMetadata(
+                    purpose == null ? event.getPurpose() : purpose,
+                    conversationSummary == null ? event.getConversationSummary() : conversationSummary
+            );
+            return event;
+        }
+        event.updateConversationMetadata(purpose, conversationSummary);
+
+        List<EventResponseHistory> history;
+        if (request.conversation() != null) {
+            history = request.conversation().stream()
+                    .map(turn -> new EventResponseHistory(event, turn.responseCode(), turn.responseText(),
+                            turn.turnNo(), turn.visitorText(), turn.purpose()))
+                    .toList();
+        } else {
+            history = request.responses().stream()
+                    .map(response -> new EventResponseHistory(event, response.responseCode(), response.responseText()))
+                    .toList();
+        }
+
+        eventResponseHistoryRepository.deleteAllByEventId(eventId);
+        eventResponseHistoryRepository.saveAll(history);
+        return event;
+    }
+
+    public EventResponseHistory saveResponse(
+            Long eventId,
+            String responseCode,
+            String responseText
+    ) {
+        Event event = eventRepository.findById(eventId)
+                .orElseThrow(() -> new EventNotFoundException(eventId));
+
+        EventResponseHistory response =
+                new EventResponseHistory(
+                        event,
+                        responseCode,
+                        responseText
+                );
+
+        EventResponseHistory savedResponse = eventResponseHistoryRepository.save(response);
+        mqttPublisher.publishAfterCommit(
+                "doorbell/" + event.getDevice().getId() + "/response",
+                new MqttResponseMessage(eventId, responseCode, responseText)
+        );
+        return savedResponse;
+    }
+}
