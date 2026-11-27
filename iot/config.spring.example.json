@@ -1,0 +1,10 @@
+{
+  "mqtt_host": "192.0.2.10",
+  "mqtt_port": 1883,
+  "spring_base_url": "http://192.0.2.11:8080",
+  "device_id": 1,
+  "sensor_type": "MOTION",
+  "connection_timeout_s": 10,
+  "event_timeout_s": 10,
+  "http_timeout_s": 10
+}

@@ -35,3 +35,8 @@ application-secret.yml
 # Media
 *.wav
 *.mp4
+
+# Local camera captures
+iot/captures/
+iot/config.local.json
+iot/environment.local.txt
