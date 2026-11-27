@@ -48,11 +48,14 @@ logs/
 # Local uploaded media
 /uploads/
 /media/
+/backend/uploads/
 
 # Media files
 *.wav
 *.mp4
 .Rhistory
 
-# Local backend uploads
-/backend/uploads/
+# Local camera captures
+iot/captures/
+iot/config.local.json
+iot/environment.local.txt
