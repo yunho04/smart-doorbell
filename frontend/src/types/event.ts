@@ -28,9 +28,27 @@ export interface EventResponse {
   createdAt: string | null
 }
 
-/** GET /api/v1/events/{eventId} */
+/** 방문자 발화 한 번과 그에 대한 AI 응답 한 번 */
+export interface ConversationTurn {
+  turnNo: number | null
+  visitorText: string | null
+  purpose: string | null
+  responseCode: string | null
+  responseText: string | null
+}
+
+/** GET /api/v1/events/{eventId} (Backend EventDetailResponse) */
 export interface EventDetail extends EventSummary {
+  deviceId?: number | null
+  responseCode?: string | null
+  responseText?: string | null
   responses: EventResponse[] | null
+  /** 최종 방문 목적 */
+  purpose?: string | null
+  /** 전체 대화 요약 */
+  conversationSummary?: string | null
+  /** 대화 기록. 예전 이벤트는 비어 있다. */
+  conversation?: ConversationTurn[] | null
 }
 
 /** POST /api/v1/events/{eventId}/feedback */

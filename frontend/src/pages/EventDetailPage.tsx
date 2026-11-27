@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError, describeError } from '../api/client'
 import { fetchEvent, sendFeedback } from '../api/events'
+import { ConversationLog } from '../components/ConversationLog'
 import { EventImage } from '../components/EventImage'
 import { FeedbackPanel, type FeedbackMessage } from '../components/FeedbackPanel'
 import { RiskBadge } from '../components/RiskBadge'
@@ -114,6 +115,10 @@ function EventDetailView({ eventId }: { eventId: string }) {
 
   const live = isInProgress(event.status)
   const responses = Array.isArray(event.responses) ? event.responses : []
+  // conversation이 없는 예전 이벤트는 responses 기반 표시를 유지한다.
+  const conversation = Array.isArray(event.conversation) ? event.conversation : []
+  const purpose = event.purpose?.trim() || null
+  const conversationSummary = event.conversationSummary?.trim() || null
   const duration = formatDuration(event.startedAt, event.endedAt)
 
   return (
@@ -167,13 +172,27 @@ function EventDetailView({ eventId }: { eventId: string }) {
                 {duration && <span className="event-duration"> ({duration})</span>}
               </dd>
             </div>
+            {purpose && (
+              <div>
+                <dt>방문 목적</dt>
+                <dd>{purpose}</dd>
+              </div>
+            )}
+            {conversationSummary && (
+              <div>
+                <dt>대화 요약</dt>
+                <dd>{conversationSummary}</dd>
+              </div>
+            )}
           </dl>
 
           <section className="section" aria-labelledby="responses-title">
             <h2 id="responses-title" className="section-title">
-              AI 응대 기록
+              {conversation.length > 0 ? '대화 기록' : 'AI 응대 기록'}
             </h2>
-            {responses.length === 0 ? (
+            {conversation.length > 0 ? (
+              <ConversationLog turns={conversation} />
+            ) : responses.length === 0 ? (
               <p className="section-empty">응대 기록 없음</p>
             ) : (
               <ol className="responses">
