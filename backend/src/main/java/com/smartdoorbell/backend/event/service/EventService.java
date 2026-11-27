@@ -3,6 +3,7 @@ package com.smartdoorbell.backend.event.service;
 import com.smartdoorbell.backend.device.entity.Device;
 import com.smartdoorbell.backend.device.repository.DeviceRepository;
 import com.smartdoorbell.backend.event.EventNotFoundException;
+import com.smartdoorbell.backend.event.dto.EventResultRequest;
 import com.smartdoorbell.backend.event.entity.Event;
 import com.smartdoorbell.backend.event.repository.EventRepository;
 import com.smartdoorbell.backend.eventresponse.entity.EventResponseHistory;
@@ -111,24 +112,41 @@ public class EventService {
     }
 
     // 3. LLM 최종 결과 저장
-    public Event completeEvent(
-            Long eventId,
-            String riskLevel,
-            String summary,
-            String responseCode,
-            String responseText
-    ) {
-
+    public Event completeEvent(Long eventId, EventResultRequest request) {
         Event event = eventRepository.findLockedById(eventId)
                 .orElseThrow(() -> new EventNotFoundException(eventId));
 
         event.complete(
-                riskLevel,
-                summary,
-                responseCode,
-                responseText
+                request.riskLevel(),
+                request.summary(),
+                request.responseCode(),
+                request.responseText()
         );
+        String purpose = request.purpose();
+        String conversationSummary = request.conversationSummary();
+        if (request.conversation() == null && request.responses() == null) {
+            event.updateConversationMetadata(
+                    purpose == null ? event.getPurpose() : purpose,
+                    conversationSummary == null ? event.getConversationSummary() : conversationSummary
+            );
+            return event;
+        }
+        event.updateConversationMetadata(purpose, conversationSummary);
 
+        List<EventResponseHistory> history;
+        if (request.conversation() != null) {
+            history = request.conversation().stream()
+                    .map(turn -> new EventResponseHistory(event, turn.responseCode(), turn.responseText(),
+                            turn.turnNo(), turn.visitorText(), turn.purpose()))
+                    .toList();
+        } else {
+            history = request.responses().stream()
+                    .map(response -> new EventResponseHistory(event, response.responseCode(), response.responseText()))
+                    .toList();
+        }
+
+        eventResponseHistoryRepository.deleteAllByEventId(eventId);
+        eventResponseHistoryRepository.saveAll(history);
         return event;
     }
 

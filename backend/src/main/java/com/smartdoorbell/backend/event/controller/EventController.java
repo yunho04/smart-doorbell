@@ -9,6 +9,7 @@ import com.smartdoorbell.backend.event.dto.EventSummaryResponse;
 import com.smartdoorbell.backend.event.entity.Event;
 import com.smartdoorbell.backend.event.service.EventQueryService;
 import com.smartdoorbell.backend.event.service.EventService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
@@ -53,15 +54,9 @@ public class EventController {
     @PostMapping("/{eventId}/result")
     public EventResponse saveResult(
             @PathVariable Long eventId,
-            @RequestBody EventResultRequest request
+            @Valid @RequestBody EventResultRequest request
     ) {
-        Event event = eventService.completeEvent(
-                eventId,
-                request.riskLevel(),
-                request.summary(),
-                request.responseCode(),
-                request.responseText()
-        );
+        Event event = eventService.completeEvent(eventId, request);
 
         return EventResponse.from(event);
     }

@@ -4,6 +4,7 @@ import com.smartdoorbell.backend.auth.ApiWebConfig;
 import com.smartdoorbell.backend.auth.AuthController;
 import com.smartdoorbell.backend.event.EventNotFoundException;
 import com.smartdoorbell.backend.event.controller.EventController;
+import com.smartdoorbell.backend.event.dto.EventDetailResponse;
 import com.smartdoorbell.backend.event.service.EventQueryService;
 import com.smartdoorbell.backend.event.service.EventService;
 import com.smartdoorbell.backend.eventresponse.controller.EventResponseController;
@@ -22,6 +23,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -68,12 +70,18 @@ class SessionApiTests {
     }
 
     @Test
-    void rejectsWrongPasswordAndProtectsUserRoutes() throws Exception {
+    void rejectsWrongPasswordAndEnforcesEventRoutePolicies() throws Exception {
+        when(eventQueryService.getEvent(1L)).thenReturn(new EventDetailResponse(
+                1L, 1L, "DETECTED", LocalDateTime.of(2026, 1, 1, 12, 0),
+                null, null, null, null, null, null, List.of(), null, null, null, List.of()));
+
         mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"password\":\"wrong\"}"))
                 .andExpect(status().isUnauthorized());
         mvc.perform(get("/api/v1/events")).andExpect(status().isUnauthorized());
-        mvc.perform(get("/api/v1/events/1")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/events/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.eventId").value(1));
         mvc.perform(get("/api/v1/events/1/image")).andExpect(status().isUnauthorized());
         mvc.perform(post("/api/v1/events/1/feedback").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"accuracyLevel\":\"HIGH\"}"))

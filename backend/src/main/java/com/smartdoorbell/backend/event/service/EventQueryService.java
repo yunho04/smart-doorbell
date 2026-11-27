@@ -11,6 +11,7 @@ import com.smartdoorbell.backend.feedback.FeedbackRepository;
 import com.smartdoorbell.backend.media.dto.RepresentativeImageResponse;
 import com.smartdoorbell.backend.media.service.MediaService;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
@@ -51,6 +52,8 @@ public class EventQueryService {
         }).toList();
     }
 
+    // Read result metadata and the replaceable response history from the same snapshot.
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public EventDetailResponse getEvent(Long eventId) {
         Event event = eventService.getEvent(eventId);
         String imageUrl = mediaService.hasRepresentativeImage(eventId) ? RepresentativeImageResponse.imageUrl(eventId) : null;

@@ -46,11 +46,8 @@ public class FeedbackService {
             feedback.updateAccuracy(accuracyLevel);
         }
 
-        List<LlmFeedbackRequest.Response> responses = responseRepository.findAllByEventIdOrderByCreatedAtAscIdAsc(eventId)
-                .stream()
-                .map(response -> new LlmFeedbackRequest.Response(response.getResponseCode(), response.getResponseText()))
-                .toList();
-        LlmFeedbackRequest request = new LlmFeedbackRequest(eventId, event.getRiskLevel(), event.getSummary(), accuracyLevel, responses);
+
+        LlmFeedbackRequest request = new LlmFeedbackRequest(eventId, event.getSummary(), accuracyLevel.name() );
 
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override

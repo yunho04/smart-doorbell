@@ -42,6 +42,12 @@ public class Event {
     @Column(name = "response_text")
     private String responseText;
 
+    @Column(name = "purpose", columnDefinition = "text")
+    private String purpose;
+
+    @Column(name = "conversation_summary", columnDefinition = "text")
+    private String conversationSummary;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -118,6 +124,14 @@ public class Event {
         return responseText;
     }
 
+    public String getPurpose() {
+        return purpose;
+    }
+
+    public String getConversationSummary() {
+        return conversationSummary;
+    }
+
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
@@ -146,6 +160,11 @@ public class Event {
     public void startAnalysis(LocalDateTime endedAt) {
         this.status = "ANALYZING";
         this.endedAt = endedAt;
+    }
+
+    public void updateConversationMetadata(String purpose, String conversationSummary) {
+        this.purpose = purpose;
+        this.conversationSummary = conversationSummary;
     }
 
     public void setStatus(String status) {

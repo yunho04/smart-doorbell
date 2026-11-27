@@ -32,18 +32,37 @@ public class ApiWebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new HandlerInterceptor() {
+
             @Override
-            public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+            public boolean preHandle(
+                    HttpServletRequest request,
+                    HttpServletResponse response,
+                    Object handler
+            ) {
+
+                String uri = request.getRequestURI();
+
+                // AI / Vision 서버가 Event 상세 정보를 조회할 수 있도록
+                // GET /api/v1/events/{eventId} 는 세션 인증 없이 허용
+                if ("GET".equalsIgnoreCase(request.getMethod())
+                        && uri.matches("^/api/v1/events/\\d+$")) {
+                    return true;
+                }
+
                 if (handler instanceof HandlerMethod method
                         && method.hasMethodAnnotation(SessionAuthentication.Required.class)) {
+
                     response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
+
                     if (!SessionAuthentication.isAuthenticated(request)) {
                         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                         return false;
                     }
                 }
+
                 return true;
             }
+
         }).addPathPatterns("/api/v1/events/**");
     }
 }
